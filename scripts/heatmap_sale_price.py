@@ -172,7 +172,8 @@ title_html = """
     <div style="font-size:13px;font-weight:bold;color:#333">
         Median Sale Price by ZIP Code — Indianapolis Metro
     </div>
-    <div style="font-size:10px;color:#666;margin-top:2px">
+
+        <div style="font-size:10px;color:#666;margin-top:2px">
         2021–2025 | Single family residential |
         Source: STATS Indiana SDF deed records
     </div>
@@ -196,8 +197,8 @@ m.get_root().html.add_child(folium.Element("""
 # ── Save ──────────────────────────────────────────────────────────────────────
 import os
 os.makedirs(ROOT / "outputs/interactive", exist_ok=True)
-m.save(ROOT / "outputs/interactive/heatmap_interactive.html")
-print("\nSaved outputs/interactive/heatmap_interactive.html")
+m.save(ROOT / "outputs/interactive/heatmap_sale_price.html")
+print("\nSaved outputs/interactive/heatmap_sale_price.html")
 
 print("\nTop 10 zip codes by median price:")
 print(
