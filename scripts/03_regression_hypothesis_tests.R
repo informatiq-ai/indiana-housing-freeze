@@ -961,18 +961,6 @@ map_data <- us_zctas %>%
   inner_join(df_map_final, by = c("GEOID20" = "zip_code")) %>%
   st_transform(4326) # WGS84 required by Leaflet
 
-# 2. PREPARE THE LABELS
-map_labels <- sprintf(
-  "<strong>Zip Code: %s</strong><br/>
-   Median HHI: $%s<br/>
-   Median Price: $%s<br/>
-   <strong>Squeeze Ratio: %sx</strong>",
-  map_data$GEOID20, 
-  format(map_data$zcta_hhi, big.mark=","), 
-  format(map_data$median_sale_price, big.mark=","),
-  round(map_data$stress_ratio, 1)
-) %>% lapply(htmltools::HTML)
-
 # 3. DEFINE STEPPED COLOR PALETTE
 # ---------------------------------------------------------
 # 4-color progression; threshold at 4.0x stress ratio triggers shift to orange/red
@@ -996,10 +984,20 @@ counties_sf <- read_sf(county_bounds_url) %>%
 
 # 5. BUILD THE INTERACTIVE MAP
 # ---------------------------------------------------------
+popup_content <- paste0(
+  "<div style='font-size:12px;font-family:Arial,sans-serif;",
+  "padding:6px 10px;line-height:1.6;max-width:200px'>",
+  "<b>ZIP: </b>", map_data$GEOID20, "<br>",
+  "<b>Median HHI: </b>$", format(map_data$zcta_hhi, big.mark = ","), "<br>",
+  "<b>Median Price: </b>$", format(map_data$median_sale_price, big.mark = ","), "<br>",
+  "<b>Squeeze Ratio: </b>", round(map_data$stress_ratio, 1), "x",
+  "</div>"
+)
+
 interactive_map <- leaflet(map_data) %>%
   addProviderTiles(providers$CartoDB.Positron) %>%
   addPolygons(
-    fillColor   = ~pal(stress_ratio), 
+    fillColor   = ~pal(stress_ratio),
     weight      = 1,
     opacity     = 1,
     color       = "white",
@@ -1010,16 +1008,21 @@ interactive_map <- leaflet(map_data) %>%
       fillOpacity = 0.9,
       bringToFront = TRUE
     ),
-    label = map_labels,
+    label = lapply(popup_content, htmltools::HTML),
     labelOptions = labelOptions(
-      direction = "auto",
       style = list(
-        "font-size"   = "14px",
-        "font-family" = "Arial, sans-serif",
-        "padding"     = "8px 12px",
-        "line-height" = "1.6"
-      )
-    )
+        "font-size"     = "12px",
+        "font-family"   = "Arial, sans-serif",
+        "padding"       = "4px 8px",
+        "line-height"   = "1.5",
+        "max-width"     = "200px",
+        "border"        = "1px solid #ccc",
+        "border-radius" = "4px",
+        "background"    = "white"
+      ),
+      textOnly = FALSE
+    ),
+    popup = popup_content
   ) %>%
   addPolygons(
     data        = counties_sf,
