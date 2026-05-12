@@ -3,8 +3,9 @@ import geopandas as gpd
 import folium
 import requests
 import numpy as np
-from branca.colormap import LinearColormap
+from branca.colormap import StepColormap
 from pathlib import Path
+import os
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,34 +26,27 @@ zip_agg = (
             x["zcta_hhi"].fillna(x["zcta_hhi"].median()),
             weights=x["transactions"]
         ),
-        "transactions":    x["transactions"].sum(),
-        "pct_mid_luxury":  np.average(
-            x["pct_mid_luxury"], weights=x["transactions"]
-        ),
-        "afford_ratio_zip": np.average(
-            x["afford_ratio_zip"].fillna(0),
-            weights=x["transactions"]
-        ),
+        "transactions": x["transactions"].sum(),
         "county": x.loc[x["transactions"].idxmax(), "county"]
     }))
     .reset_index()
 )
 
-# Pre-format display columns — no lambda formatters
-zip_agg["hhi_display"]       = zip_agg["zcta_hhi"].apply(
-    lambda x: f"${x:,.0f}")
-zip_agg["price_display"]     = zip_agg["median_sale_price"].apply(
-    lambda x: f"${x:,.0f}")
-zip_agg["afford_display"]    = zip_agg["afford_ratio_zip"].apply(
-    lambda x: f"{x:.1%}")
-zip_agg["midlux_display"]    = zip_agg["pct_mid_luxury"].apply(
-    lambda x: f"{x:.1f}%")
-zip_agg["trans_display"]     = zip_agg["transactions"].apply(
-    lambda x: f"{int(x):,}")
+# Compute squeeze ratio; drop rows where HHI is missing or zero
+zip_agg = zip_agg[zip_agg["zcta_hhi"].notna() & (zip_agg["zcta_hhi"] > 0)].copy()
+zip_agg["stress_ratio"] = zip_agg["median_sale_price"] / zip_agg["zcta_hhi"]
 
-print(f"Zip codes for HHI map: {len(zip_agg)}")
-print(f"HHI range: ${zip_agg['zcta_hhi'].min():,.0f}"
-      f" — ${zip_agg['zcta_hhi'].max():,.0f}")
+# Pre-format display columns — no lambda formatters in tooltip
+zip_agg["hhi_display"]    = zip_agg["zcta_hhi"].apply(
+    lambda x: f"${x:,.0f}")
+zip_agg["price_display"]  = zip_agg["median_sale_price"].apply(
+    lambda x: f"${x:,.0f}")
+zip_agg["ratio_display"]  = zip_agg["stress_ratio"].apply(
+    lambda x: f"{x:.1f}x")
+
+print(f"Zip codes for squeeze map: {len(zip_agg)}")
+print(f"Squeeze ratio range: {zip_agg['stress_ratio'].min():.2f}x"
+      f" — {zip_agg['stress_ratio'].max():.2f}x")
 
 # ── Download zip boundaries ───────────────────────────────────────────────────
 zip_cache = ROOT / "data/processed/indiana_zips.geojson"
@@ -82,33 +76,32 @@ gdf_merged = gdf.merge(
 
 print(f"Matched {len(gdf_merged)} zip codes")
 
-# ── Drop rows with missing HHI before mapping ─────────────────────────────────
-gdf_merged = gdf_merged[gdf_merged["zcta_hhi"].notna()].copy()
-print(f"Zip codes after dropping missing HHI: {len(gdf_merged)}")
-
-# ── Build HHI choropleth map ──────────────────────────────────────────────────
+# ── Build squeeze choropleth map ──────────────────────────────────────────────
 m = folium.Map(
     location   = [39.90, -86.16],
     zoom_start = 10,
     tiles      = "CartoDB positron"
 )
 
-# Color scale: light blue → dark blue (income gradient)
-# Distinct from sale price map (orange/red) for side-by-side comparison
-colormap = LinearColormap(
-    colors  = ["#EFF3FF", "#BDD7E7", "#6BAED6",
-               "#3182BD", "#08519C", "#08306B"],
-    vmin    = zip_agg["zcta_hhi"].quantile(0.05),
-    vmax    = zip_agg["zcta_hhi"].quantile(0.95),
-    caption = "Median household income 2023 (ACS 5-year)"
+# 4-step palette matching the R Leaflet version:
+#   0–3x  dark navy   #08306B (affordable)
+#   3–4x  mid blue    #4472C4
+#   4–5x  orange      #ED7D31 (stress threshold)
+#   5x+   deep red    #C00000 (severe squeeze)
+colormap = StepColormap(
+    colors  = ["#08306B", "#4472C4", "#ED7D31", "#C00000"],
+    vmin    = 0,
+    vmax    = 6,
+    index   = [0, 3, 4, 5, 6],
+    caption = "Squeeze Ratio (Median Sale Price ÷ Median HHI)"
 )
 
-# Zip polygons
+# ZIP polygons with tooltip
 folium.GeoJson(
     gdf_merged,
     style_function = lambda feature: {
         "fillColor":   colormap(
-            feature["properties"]["zcta_hhi"]
+            min(feature["properties"]["stress_ratio"], 5.99)
         ),
         "color":       "#555555",
         "weight":      0.8,
@@ -118,15 +111,11 @@ folium.GeoJson(
         fields  = ["zip_code", "county",
                    "hhi_display",
                    "price_display",
-                   "afford_display",
-                   "midlux_display",
-                   "trans_display"],
+                   "ratio_display"],
         aliases = ["ZIP", "County",
                    "Median HHI",
                    "Median Sale Price",
-                   "Afford. Ratio (6.2%)",
-                   "% Mid-luxury",
-                   "Transactions"],
+                   "Squeeze Ratio"],
         localize = False
     )
 ).add_to(m)
@@ -155,7 +144,7 @@ folium.GeoJson(
     counties_sub,
     style_function = lambda x: {
         "fillColor":   "none",
-        "color":       "#222222",
+        "color":       "#000000",
         "weight":      2.5,
         "fillOpacity": 0
     }
@@ -192,11 +181,11 @@ title_html = """
     font-family:Arial,sans-serif;text-align:center;
     max-width:280px;">
     <div style="font-size:13px;font-weight:bold;color:#333">
-        Median Household Income by ZIP Code — Indianapolis Metro
+        The Indy Squeeze: Housing Affordability by ZIP Code &mdash; Indianapolis Metro
     </div>
     <div style="font-size:10px;color:#666;margin-top:2px">
-        ACS 2023 5-year estimates |
-        Hover for sale price, affordability ratio, and mid-luxury share
+        Squeeze Ratio = Median Sale Price &divide; Median Household Income |
+        2021&ndash;2025 | Source: STATS Indiana SDF &amp; U.S. Census Bureau ACS 2023
     </div>
 </div>"""
 m.get_root().html.add_child(folium.Element(title_html))
@@ -215,16 +204,14 @@ m.get_root().html.add_child(folium.Element("""
 """))
 
 # ── Save ──────────────────────────────────────────────────────────────────────
-import os
 os.makedirs(ROOT / "outputs/interactive", exist_ok=True)
-m.save(ROOT / "outputs/interactive/heatmap_hhi.html")
-print("\nSaved outputs/interactive/heatmap_hhi.html")
+m.save(ROOT / "outputs/interactive/heatmap_squeeze.html")
+print("\nSaved outputs/interactive/heatmap_squeeze.html")
 
-print("\nTop 10 zip codes by HHI:")
+print("\nTop 10 zip codes by squeeze ratio:")
 print(
-    zip_agg.sort_values("zcta_hhi", ascending=False)
+    zip_agg.sort_values("stress_ratio", ascending=False)
     .head(10)[["zip_code", "county",
-               "hhi_display", "price_display",
-               "afford_display", "midlux_display"]]
+               "ratio_display", "price_display", "hhi_display"]]
     .to_string(index=False)
 )

@@ -43,13 +43,19 @@ print(f"Price range: ${zip_agg['median_sale_price'].min():,.0f}"
       f" — ${zip_agg['median_sale_price'].max():,.0f}")
 
 # ── Load Indiana zip code boundaries ─────────────────────────────────────────
-print("\nDownloading zip code boundaries...")
-tiger_url = (
-    "https://raw.githubusercontent.com/OpenDataDE/"
-    "State-zip-code-GeoJSON/master/in_indiana_zip_codes_geo.min.json"
-)
-response = requests.get(tiger_url, timeout=30)
-gdf = gpd.read_file(response.text.encode(), driver="GeoJSON")
+zip_cache = ROOT / "data/processed/indiana_zips.geojson"
+if zip_cache.exists():
+    gdf = gpd.read_file(zip_cache)
+else:
+    print("Downloading zip boundaries (one-time)...")
+    tiger_url = (
+        "https://raw.githubusercontent.com/OpenDataDE/"
+        "State-zip-code-GeoJSON/master/in_indiana_zip_codes_geo.min.json"
+    )
+    response = requests.get(tiger_url, timeout=30)
+    gdf = gpd.read_file(response.text.encode())
+    gdf.to_file(zip_cache, driver="GeoJSON")
+    print("Cached to data/processed/indiana_zips.geojson")
 
 zip_col = [c for c in gdf.columns
            if "zip" in c.lower() or "zcta" in c.lower()][0]
@@ -104,14 +110,20 @@ folium.GeoJson(
 ).add_to(m)
 
 # ── County boundary outlines ──────────────────────────────────────────────────
-county_url = (
-    "https://raw.githubusercontent.com/plotly/datasets/"
-    "master/geojson-counties-fips.json"
-)
-county_resp  = requests.get(county_url, timeout=30)
-counties_gdf = gpd.read_file(
-    county_resp.text.encode(), driver="GeoJSON"
-)
+# Cache county GeoJSON locally to avoid repeated large downloads
+county_cache = ROOT / "data/processed/counties_fips.geojson"
+if county_cache.exists():
+    counties_gdf = gpd.read_file(county_cache)
+else:
+    print("Downloading county boundaries (one-time)...")
+    county_url   = (
+        "https://raw.githubusercontent.com/plotly/datasets/"
+        "master/geojson-counties-fips.json"
+    )
+    county_resp  = requests.get(county_url, timeout=60)
+    counties_gdf = gpd.read_file(county_resp.text.encode(), driver="GeoJSON")
+    counties_gdf.to_file(county_cache, driver="GeoJSON")
+    print("Cached to data/processed/counties_fips.geojson")
 target_fips = ["18097", "18057", "18011", "18063", "18081"]
 counties_subset = counties_gdf[
     counties_gdf["id"].isin(target_fips)
@@ -153,26 +165,40 @@ for name, (lat, lon) in county_labels.items():
 title_html = """
 <div style="position:fixed;top:10px;left:50%;
     transform:translateX(-50%);z-index:1000;
-    background:white;padding:10px 20px;
+    background:white;padding:6px 14px;
     border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    font-family:Arial,sans-serif;text-align:center">
-    <div style="font-size:16px;font-weight:bold;color:#333">
+    font-family:Arial,sans-serif;text-align:center;
+    max-width:280px;">
+    <div style="font-size:13px;font-weight:bold;color:#333">
         Median Sale Price by ZIP Code — Indianapolis Metro
     </div>
-    <div style="font-size:12px;color:#666;margin-top:4px">
+
+        <div style="font-size:10px;color:#666;margin-top:2px">
         2021–2025 | Single family residential |
-        Source: STATS Indiana SDF deed records (N=284,986)
+        Source: STATS Indiana SDF deed records
     </div>
 </div>"""
 m.get_root().html.add_child(folium.Element(title_html))
 
 colormap.add_to(m)
+m.get_root().html.add_child(folium.Element("""
+<style>
+.colormap {
+    position: fixed !important;
+    bottom: 40px !important;
+    right: 10px !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: 1000 !important;
+}
+</style>
+"""))
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 import os
 os.makedirs(ROOT / "outputs/interactive", exist_ok=True)
-m.save(ROOT / "outputs/interactive/heatmap_interactive.html")
-print("\nSaved outputs/interactive/heatmap_interactive.html")
+m.save(ROOT / "outputs/interactive/heatmap_sale_price.html")
+print("\nSaved outputs/interactive/heatmap_sale_price.html")
 
 print("\nTop 10 zip codes by median price:")
 print(
