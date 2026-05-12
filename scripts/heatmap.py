@@ -99,7 +99,7 @@ folium.GeoJson(
                    "Median Price",
                    "Transactions",
                    "% Mid-luxury"],
-        localize = False
+        localize = False,
     )
 ).add_to(m)
 
@@ -149,33 +149,6 @@ for name, (lat, lon) in county_labels.items():
         )
     ).add_to(m)
 
-# ── Price labels on top 5 zip codes ──────────────────────────────────────────
-gdf_proj  = gdf_merged.to_crs(epsg=3857)
-top5_zips = zip_agg.nlargest(5, "median_sale_price")["zip_code"].tolist()
-gdf_top5  = gdf_proj[gdf_proj["zip_code"].isin(top5_zips)].copy()
-
-for _, row in gdf_top5.iterrows():
-    # Calculate centroid in projected CRS then convert coordinates
-    centroid    = row.geometry.centroid
-    centroid_gdf = gpd.GeoSeries([centroid], crs=3857).to_crs(4326)
-    lon = centroid_gdf.iloc[0].x
-    lat = centroid_gdf.iloc[0].y
-
-    folium.Marker(
-        location = [lat, lon],
-        icon     = folium.DivIcon(
-            html = f"""<div style="
-                font-size:10px;font-weight:bold;color:#8C2D04;
-                background:rgba(255,255,255,0.85);
-                padding:2px 5px;border-radius:3px;
-                white-space:nowrap">
-                {row['zip_code']}<br>${row['median_sale_price']/1000:.0f}K
-            </div>""",
-            icon_size   = (70, 28),
-            icon_anchor = (35, 14)
-        )
-    ).add_to(m)
-
 # ── Title ─────────────────────────────────────────────────────────────────────
 title_html = """
 <div style="position:fixed;top:10px;left:50%;
@@ -195,91 +168,11 @@ m.get_root().html.add_child(folium.Element(title_html))
 
 colormap.add_to(m)
 
-# ── Inset map: Indiana state with study area highlighted ──────────────────────
-# Reuse the counties GeoJSON already downloaded above
-indiana_gdf = counties_gdf.copy()
-
-indiana_only = indiana_gdf[
-    indiana_gdf["id"].str.startswith("18")
-].to_crs(epsg=4326)
-
-study_fips    = ["18097", "18057", "18011", "18063", "18081"]
-study_area    = indiana_only[indiana_only["id"].isin(study_fips)]
-other_indiana = indiana_only[~indiana_only["id"].isin(study_fips)]
-
-inset = folium.Map(
-    location          = [39.9, -86.3],
-    zoom_start        = 6,
-    tiles             = "CartoDB positron",
-    zoom_control      = False,
-    scrollWheelZoom   = False,
-    dragging          = False,
-    doubleClickZoom   = False,
-    attributionControl = False
-)
-
-# Other Indiana counties — white fill with visible grey border
-folium.GeoJson(
-    other_indiana,
-    style_function = lambda x: {
-        "fillColor":   "#FFFFFF",
-        "color":       "#888888",
-        "weight":      0.8,
-        "fillOpacity": 0.9
-    }
-).add_to(inset)
-
-# Study area — bright red so it pops
-folium.GeoJson(
-    study_area,
-    style_function = lambda x: {
-        "fillColor":   "#E41A1C",
-        "color":       "#333333",
-        "weight":      1.5,
-        "fillOpacity": 0.85
-    }
-).add_to(inset)
-
-inset_html = inset.get_root().render()
-
-# Larger inset — 220x240px
-inset_element = f"""
-<div style="
-    position: fixed;
-    bottom: 30px;
-    left: 10px;
-    z-index: 1000;
-    width: 220px;
-    height: 260px;
-    border: 2px solid #333;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-    background: white;">
-    <div style="
-        position:absolute;top:0;left:0;right:0;
-        background:#333333;color:white;
-        font-size:11px;font-family:Arial;font-weight:bold;
-        padding:4px 8px;z-index:10;
-        letter-spacing:0.5px;">
-        &#9679; Study area within Indiana
-    </div>
-    <iframe
-        srcdoc='{inset_html.replace("'", "&apos;")}'
-        style="width:100%;height:100%;border:none;margin-top:22px"
-        scrolling="no">
-    </iframe>
-</div>
-"""
-
-m.get_root().html.add_child(folium.Element(inset_element))
-
 # ── Save ──────────────────────────────────────────────────────────────────────
 import os
 os.makedirs(ROOT / "outputs/interactive", exist_ok=True)
 m.save(ROOT / "outputs/interactive/heatmap_interactive.html")
 print("\nSaved outputs/interactive/heatmap_interactive.html")
-print("Open in browser and screenshot for presentation")
 
 print("\nTop 10 zip codes by median price:")
 print(

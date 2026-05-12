@@ -986,7 +986,15 @@ pal <- colorBin(
   na.color = "transparent"
 )
 
-# 4. BUILD THE INTERACTIVE MAP
+# 4. COUNTY BOUNDARY LAYER — five study-area counties
+# ---------------------------------------------------------
+# Same GeoJSON source as heatmap.py; filtered to study FIPS codes
+county_bounds_url <- "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json"
+counties_sf <- read_sf(county_bounds_url) %>%
+  filter(id %in% c("18097", "18057", "18011", "18063", "18081")) %>%
+  st_transform(4326)
+
+# 5. BUILD THE INTERACTIVE MAP
 # ---------------------------------------------------------
 interactive_map <- leaflet(map_data) %>%
   addProviderTiles(providers$CartoDB.Positron) %>%
@@ -1003,10 +1011,47 @@ interactive_map <- leaflet(map_data) %>%
       bringToFront = TRUE
     ),
     label = map_labels,
-    labelOptions = labelOptions(direction = "auto")
+    labelOptions = labelOptions(
+      direction = "auto",
+      style = list(
+        "font-size"   = "14px",
+        "font-family" = "Arial, sans-serif",
+        "padding"     = "8px 12px",
+        "line-height" = "1.6"
+      )
+    )
   ) %>%
-  
-  # 5. ADD LEGEND
+  addPolygons(
+    data        = counties_sf,
+    fillColor   = "transparent",
+    fillOpacity = 0,
+    color       = "#000000",
+    weight      = 2.5,
+    options     = pathOptions(interactive = FALSE)
+  ) %>%
+  addLabelOnlyMarkers(
+    data = data.frame(
+      lat  = c(39.773, 40.048, 40.048, 39.773, 39.490),
+      lng  = c(-86.158, -86.046, -86.470, -86.520, -86.100),
+      name = c("Marion", "Hamilton", "Boone", "Hendricks", "Johnson")
+    ),
+    lat   = ~lat,
+    lng   = ~lng,
+    label = ~name,
+    labelOptions = labelOptions(
+      permanent  = TRUE,
+      direction  = "center",
+      textOnly   = TRUE,
+      style = list(
+        "font-size"   = "13px",
+        "font-weight" = "bold",
+        "color"       = "#222222",
+        "text-shadow" = "1px 1px 2px white"
+      )
+    )
+  ) %>%
+
+  # 6. ADD LEGEND
   # ---------------------------------------------------------
 addLegend(
   pal      = pal, 
