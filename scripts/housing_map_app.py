@@ -273,6 +273,22 @@ def _city_marker_trace() -> go.Scattermap:
     )
 
 
+def _zip_centroid(geojson: dict, zip_code: str) -> tuple:
+    """Return (lat, lon) mean centroid for a ZIP from GeoJSON polygon coordinates."""
+    for feat in geojson["features"]:
+        if feat.get("properties", {}).get("ZCTA5CE10") == zip_code:
+            geom = feat["geometry"]
+            ring = (
+                geom["coordinates"][0]
+                if geom["type"] == "Polygon"
+                else max(geom["coordinates"], key=lambda p: len(p[0]))[0]
+            )
+            lons = [c[0] for c in ring]
+            lats = [c[1] for c in ring]
+            return sum(lats) / len(lats), sum(lons) / len(lons)
+    return None, None
+
+
 # ── Map builders ──────────────────────────────────────────────────────────────
 
 def build_hhi_map(
@@ -423,6 +439,19 @@ def build_squeeze_map(
     fig.add_trace(_county_outline_trace(_counties_sub))
     fig.add_trace(_city_marker_trace())
     fig.add_trace(_county_label_trace(_counties_sub))
+    # Annotate the highest-stress ZIP dynamically so it updates with the data.
+    top_row = zip_agg.loc[zip_agg["stress_ratio"].idxmax()]
+    top_lat, top_lon = _zip_centroid(geojson, top_row["zip_code"])
+    if top_lat is not None:
+        fig.add_trace(go.Scattermap(
+            lat=[top_lat], lon=[top_lon],
+            mode="markers+text",
+            text=[f"{top_row['ratio_display']} — highest stress in metro"],
+            textposition="top right",
+            marker=dict(size=8, color="red", symbol="circle"),
+            textfont=dict(size=11, color="red"),
+            hoverinfo="skip", showlegend=False,
+        ))
     fig.update_layout(
         title=dict(
             text="Housing Squeeze Index · 2021–2025 | 4× = stress threshold",
@@ -439,8 +468,20 @@ def build_squeeze_map(
 
 st.set_page_config(
     page_title="Indianapolis Housing Market Analysis",
+    page_icon="🏠",
     layout="wide",
 )
+
+st.markdown("""
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+[data-testid="stToolbar"] {visibility: hidden;}
+[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-secondary"] { border-radius: 20px; }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("Indianapolis Housing Market Analysis")
 
@@ -450,70 +491,82 @@ MAP_OPTIONS = [
     "Housing Squeeze Index",
 ]
 
-DESCRIPTIONS = {
+LEDE = {
     "Median Household Income": (
-        "Median household income by ZIP code across the Indianapolis metro, "
-        "drawn from the 2023 ACS 5-year estimates."
+        "Hamilton County leads the metro in household income, with several ZIP codes exceeding "
+        "$120,000. Marion County's urban core clusters below $60,000 — a gap that shapes who "
+        "can afford to buy."
     ),
     "Median Sale Price": (
-        "Median residential sale price by ZIP code from 198,407 arm's-length "
-        "deed records, 2021–2025 (STATS Indiana SDF)."
+        "Median sale prices in Hamilton County's Carmel and Fishers ZIPs surpassed $500,000 "
+        "between 2021 and 2025. Prices in Johnson County's outer ZIPs remain below $250,000 — "
+        "for now."
     ),
     "Housing Squeeze Index": (
-        "Price-to-income ratio (median sale price ÷ median household income) "
-        "by ZIP code; values above 4× indicate housing stress."
+        "A price-to-income ratio above 4× signals housing stress. Several eastern Marion County "
+        "ZIPs have crossed that threshold. One ZIP exceeds 5.7× — the highest in the metro."
     ),
 }
 
-ABOUT = {
-    "Median Household Income": """\
-**Source:** U.S. Census Bureau, American Community Survey 2023 5-year estimates.
-
-Income figures are ZCTA-level medians joined to arm's-length deed records from
-STATS Indiana. Hover a ZIP polygon to see median sale price, affordability
-ratio, and mid-luxury transaction share.
-""",
-    "Median Sale Price": """\
-**Source:** STATS Indiana Sales Disclosure Form (SDF) deed records, 2021–2025.
-
-Filters applied: residential-only parcels, arm's-length qualification
-(B1\\_Valuable\\_Consider = Y), assessor quality gate (P2\\_16\\_Valid\\_Trending = Y),
-sale price ≥ $50K, assessed value > $10K. N = 198,407 transactions across
-five Indianapolis-area counties (Marion, Hamilton, Boone, Hendricks, Johnson).
-""",
-    "Housing Squeeze Index": """\
-**Source:** STATS Indiana SDF deed records + ACS 2023 5-year income estimates.
-
-Squeeze Ratio = median sale price ÷ median household income, computed at ZIP
-code level. Thresholds: below 3× (affordable), 3–4× (moderate pressure),
-4–5× (stressed), above 5× (severe squeeze). Methodology follows the
-rate lock-in analysis in the project findings document.
-""",
-}
-
-selected = st.radio(
-    "Select map",
-    options=MAP_OPTIONS,
-    horizontal=True,
-    label_visibility="collapsed",
+ABOUT_TEXT = (
+    "Sale price data covers 198,407 arm's-length residential property transfers recorded in "
+    "Boone, Hamilton, Hendricks, Marion, and Johnson counties between 2021 and 2025, sourced "
+    "from STATS Indiana deed records. Household income figures are ZIP-code level medians from "
+    "the U.S. Census Bureau's 2023 American Community Survey 5-year estimates. The "
+    "price-to-income ratio divides median sale price by median household income for each ZIP "
+    "code. Economists generally consider a ratio above 4× an indicator of housing affordability "
+    "stress."
 )
 
-st.caption(DESCRIPTIONS[selected])
+if "selected_map" not in st.session_state:
+    st.session_state["selected_map"] = MAP_OPTIONS[0]
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button(
+        MAP_OPTIONS[0],
+        use_container_width=True,
+        type="primary" if st.session_state["selected_map"] == MAP_OPTIONS[0] else "secondary",
+    ):
+        st.session_state["selected_map"] = MAP_OPTIONS[0]
+        st.rerun()
+with col2:
+    if st.button(
+        MAP_OPTIONS[1],
+        use_container_width=True,
+        type="primary" if st.session_state["selected_map"] == MAP_OPTIONS[1] else "secondary",
+    ):
+        st.session_state["selected_map"] = MAP_OPTIONS[1]
+        st.rerun()
+with col3:
+    if st.button(
+        MAP_OPTIONS[2],
+        use_container_width=True,
+        type="primary" if st.session_state["selected_map"] == MAP_OPTIONS[2] else "secondary",
+    ):
+        st.session_state["selected_map"] = MAP_OPTIONS[2]
+        st.rerun()
+
+selected = st.session_state["selected_map"]
+
+st.markdown(
+    f'<p style="font-size:1rem;color:inherit;line-height:1.6;'
+    f'max-width:720px;margin:0 auto 0.5rem auto;">{LEDE[selected]}</p>',
+    unsafe_allow_html=True,
+)
 
 zip_data     = load_zip_csv()
 geojson      = load_zip_geojson_simplified()
 counties_sub = load_county_boundaries()
 
-if selected == "Median Household Income":
+if selected == MAP_OPTIONS[0]:
     fig = build_hhi_map(zip_data, geojson, counties_sub)
-elif selected == "Median Sale Price":
+elif selected == MAP_OPTIONS[1]:
     fig = build_sale_price_map(zip_data, geojson, counties_sub)
 else:
     fig = build_squeeze_map(zip_data, geojson, counties_sub)
 
 st.plotly_chart(fig, width="stretch", config={"scrollZoom": True})
 
-st.caption("Use the camera icon in the map toolbar to save a PNG.")
-
 with st.expander("About this data", expanded=False):
-    st.markdown(ABOUT[selected])
+    st.markdown(ABOUT_TEXT)
