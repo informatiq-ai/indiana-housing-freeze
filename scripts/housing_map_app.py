@@ -336,12 +336,7 @@ def build_hhi_map(
     fig.add_trace(_city_marker_trace())
     fig.add_trace(_county_label_trace(_counties_sub))
     fig.update_layout(
-        title=dict(
-            text="Median Household Income · ACS 2023 5-year estimates",
-            x=0.5, xanchor="center",
-            font=dict(size=14, color="#333"),
-        ),
-        margin=dict(l=0, r=0, t=40, b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
     )
     return fig
@@ -387,12 +382,7 @@ def build_sale_price_map(
     fig.add_trace(_city_marker_trace())
     fig.add_trace(_county_label_trace(_counties_sub))
     fig.update_layout(
-        title=dict(
-            text="Median Sale Price · 2021–2025 (STATS Indiana SDF)",
-            x=0.5, xanchor="center",
-            font=dict(size=14, color="#333"),
-        ),
-        margin=dict(l=0, r=0, t=40, b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
     )
     return fig
@@ -453,12 +443,7 @@ def build_squeeze_map(
             hoverinfo="skip", showlegend=False,
         ))
     fig.update_layout(
-        title=dict(
-            text="Housing Squeeze Index · 2021–2025 | 4× = stress threshold",
-            x=0.5, xanchor="center",
-            font=dict(size=14, color="#333"),
-        ),
-        margin=dict(l=0, r=0, t=40, b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
     )
     return fig
@@ -480,6 +465,8 @@ header {visibility: hidden;}
 [data-testid="stToolbar"] {visibility: hidden;}
 [data-testid="stBaseButton-primary"],
 [data-testid="stBaseButton-secondary"] { border-radius: 20px; }
+.mapboxgl-ctrl-attrib { font-size: 9px !important; opacity: 0.5 !important; }
+.maplibregl-ctrl-attrib { font-size: 9px !important; opacity: 0.5 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -490,6 +477,12 @@ MAP_OPTIONS = [
     "Median Sale Price",
     "Housing Squeeze Index",
 ]
+
+MAP_TITLES = {
+    "Median Household Income": "Median Household Income · ACS 2023 5-year estimates",
+    "Median Sale Price": "Median Sale Price · 2021–2025 (STATS Indiana SDF)",
+    "Housing Squeeze Index": "Housing Squeeze Index · 2021–2025 | 4× = stress threshold",
+}
 
 LEDE = {
     "Median Household Income": (
@@ -566,7 +559,17 @@ elif selected == MAP_OPTIONS[1]:
 else:
     fig = build_squeeze_map(zip_data, geojson, counties_sub)
 
-st.plotly_chart(fig, width="stretch", config={"scrollZoom": True})
+st.markdown(
+    f"<p style='text-align:center; font-size:0.95rem; line-height:1.4; "
+    f"color:inherit; margin-bottom:0.25rem;'>{MAP_TITLES[selected]}</p>",
+    unsafe_allow_html=True,
+)
+
+st.plotly_chart(
+    fig,
+    width="stretch",
+    config={"scrollZoom": True, "displayModeBar": False},
+)
 
 with st.expander("About this data", expanded=False):
     st.markdown(ABOUT_TEXT)
