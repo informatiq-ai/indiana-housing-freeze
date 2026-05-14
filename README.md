@@ -64,19 +64,37 @@ scripts/         # All analysis scripts (R and Python)
 docs/            # Write-ups and publication drafts
 ```
 
+## Interactive Map App
+
+The primary deliverable is a Streamlit application displaying three ZIP-level choropleth maps across the five-county metro.
+
+```bash
+# One-time pre-processing (required before first run)
+python scripts/build_simplified_geojson.py
+
+# Launch the app
+streamlit run scripts/housing_map_app.py
+```
+
+`build_simplified_geojson.py` simplifies the Indiana ZIP GeoJSON from 791K to 145K coordinates and writes the result to `data/zip_geojson_simplified.json`. The app reads this file directly at startup; without it the app will fail to load. Re-run the script if `data/processed/indiana_zips.geojson` is regenerated.
+
+The app provides three switchable views via radio button:
+
+- **Median Household Income** — ZCTA-level medians from the 2023 ACS 5-year estimates, weighted by transaction count. Hover shows HHI, median sale price, affordability ratio, mid-luxury share, and transaction count.
+- **Median Sale Price** — Transaction-weighted median sale price by ZIP, 2021–2025. Hover shows price, transaction count, and mid-luxury share.
+- **Housing Squeeze Index** — Price-to-income ratio (median sale price ÷ median HHI) by ZIP; 4× marks the stress threshold. Hover shows HHI, median price, and squeeze ratio with stepped RdBu coloring.
+
 ## Scripts
 
-**`scripts/data_pipeline.py`** processes STATS Indiana SDF deed records. It loads SALEDISC files for 2021–2025, applies all arm's-length and quality filters, assigns price segments via k-means, joins SALEPARCEL zip codes, joins ZCTA-level HHI, and computes zip-level affordability ratios. Outputs: `data/processed/sdf_indiana.csv` and `data/processed/zip_median_prices.csv`.
+**`scripts/00_data_pipeline.py`** processes STATS Indiana SDF deed records. It loads SALEDISC files for 2021–2025, applies all arm's-length and quality filters, assigns price segments via k-means, joins SALEPARCEL zip codes, joins ZCTA-level HHI, and computes zip-level affordability ratios. Outputs: `data/processed/sdf_indiana.csv` and `data/processed/zip_median_prices.csv`.
 
 **`scripts/01_data_pipeline.R`** builds the county-month panel used in all regression models. It joins Redfin listing data, Census county demographics, ZCTA HHI, and FRED mortgage rates. Computed variables include `rate_gap`, `affordability_ratio`, DiD indicators (`post`, `treated`, `did`), and per-capita transaction counts by segment. Outputs: `data/processed/panel_data.rds` and `data/processed/panel_data.csv`. Requires `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron`.
 
 **`scripts/02_eda_descriptive_stats.R`** produces Figures 1 through 8, Figure 12, and Table 1. It loads `panel_data.rds` and `sdf_indiana.csv` and generates descriptive statistics, time series plots, the parallel trends check, price index by segment, affordability ratios, and DOM distributions.
 
-**`scripts/03_regression_hypothesis_tests.R`** estimates all regression models and generates Figure 9 and the interactive squeeze map. Models include DOM regressions on the panel (N = 300), price models on individual deed records (N = 198,407), triple-interaction DiD specifications for price and volume, Welch two-sample t-tests, and the Pearson correlation matrix.
+**`scripts/03_regression_hypothesis_tests.R`** estimates all regression models and generates Figure 9 and the squeeze map. Models include DOM regressions on the panel (N = 300), price models on individual deed records (N = 198,407), triple-interaction DiD specifications for price and volume, Welch two-sample t-tests, and the Pearson correlation matrix.
 
-**`scripts/heatmap.py`** generates `outputs/interactive/heatmap_interactive.html`, a Folium choropleth of median sale price by ZIP code using an orange/yellow color scale.
-
-**`scripts/heatmap_hhi.py`** generates `outputs/interactive/heatmap_hhi.html`, a Folium choropleth of median household income by ZIP code using a blue color scale, with affordability ratio and mid-luxury share in the interactive tooltip.
+**`scripts/build_simplified_geojson.py`** pre-computes `data/zip_geojson_simplified.json` from the cached Indiana ZIP GeoJSON. Run once before launching the Streamlit app, and again whenever the source GeoJSON is refreshed.
 
 ## Outputs
 
@@ -113,11 +131,7 @@ docs/            # Write-ups and publication drafts
 
 ### Interactive Maps
 
-| File | Description |
-|------|-------------|
-| `heatmap_interactive.html` | Choropleth of median sale price by ZIP code (orange scale); hover for transaction count and mid-luxury share |
-| `heatmap_hhi.html` | Choropleth of median household income by ZIP code (blue scale); hover for affordability ratio and mid-luxury share |
-| `indy_squeeze_interactive.html` | Leaflet map of price-to-income stress ratio by ZIP code; stepped 4-color palette with threshold at 4.0x |
+Served by `scripts/housing_map_app.py` (Streamlit). Not committed to the repository; run the app locally with `streamlit run scripts/housing_map_app.py`.
 
 ## Limitations
 
@@ -125,7 +139,7 @@ Days-on-market figures from Redfin are subject to delist-relist cycling and repr
 
 ## Reproducibility
 
-All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Path` anchored to the repository root. Set `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron` before running `01_data_pipeline.R`. The `data_pipeline.py` script requires STATS Indiana SDF flat files (`SALEDISC20XX.txt` and `SALEPARCEL20XX.txt`) placed in the repository root; these files are not redistributed here.
+All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Path` anchored to the repository root. Set `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron` before running `01_data_pipeline.R`. The `00_data_pipeline.py` script requires STATS Indiana SDF flat files (`SALEDISC20XX.txt` and `SALEPARCEL20XX.txt`) placed in the repository root; these files are not redistributed here.
 
 ## Data Sources
 

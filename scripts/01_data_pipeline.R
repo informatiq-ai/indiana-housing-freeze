@@ -23,7 +23,7 @@
 
 # ── Package setup ─────────────────────────────────────────────────────────────
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, fredr, httr, jsonlite)
+pacman::p_load(tidyverse, fredr, httr, jsonlite, here)
 
 # ── API keys (stored in .Renviron) ────────────────────────────────────────────
 CENSUS_API_KEY <- Sys.getenv("CENSUS_API_KEY")
@@ -43,7 +43,7 @@ target_counties <- c("Boone County, IN", "Hamilton County, IN",
                      "Hendricks County, IN", "Marion County, IN",
                      "Johnson County, IN")
 
-redfin <- read_csv("redfin_indiana.csv", na = c("", "NA", "--")) %>%
+redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "NA", "--")) %>%
   rename_with(~ str_to_lower(str_replace_all(., "[ /]", "_"))) %>%
   mutate(
     period_begin      = as.Date(period_begin),
@@ -72,10 +72,12 @@ redfin %>% count(region, property_type) %>% print()
 # ACS 2023 5-year estimates — used as time-invariant controls
 # FIPS: Indiana=18, Boone=011, Hamilton=057, Hendricks=063, Johnson=081, Marion=097
 # Results cached to census_county_controls.csv to avoid repeated API calls
+# ZCTA-level HHI is pulled separately in 00_data_pipeline.py (Step 3c).
+# This step covers county-level controls only.
 # ══════════════════════════════════════════════════════════════════════════════
 
-if (file.exists("census_county_controls.csv")) {
-  county_census <- read_csv("census_county_controls.csv",
+if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
+  county_census <- read_csv(here::here("data/processed/census_county_controls.csv"),
                             show_col_types = FALSE)
   income_lookup <- county_census %>% select(county, median_hhi)
   pop_lookup    <- county_census %>% select(county, population)
@@ -120,54 +122,10 @@ if (file.exists("census_county_controls.csv")) {
   county_census <- income_lookup %>%
     left_join(pop_lookup, by = "county")
   
-  write_csv(county_census, "census_county_controls.csv")
+  write_csv(county_census, here::here("data/processed/census_county_controls.csv"))
   cat("Saved census_county_controls.csv\n")
   print(county_census)
 }
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STEP 3: CENSUS ACS — ZIP-LEVEL HHI
-# Pulls median household income at ZCTA level (B19013_001E)
-# ACS ZCTA endpoint requires national pull — cannot filter by state
-# Results cached to hhi_zcta.csv to avoid repeated API calls
-# ══════════════════════════════════════════════════════════════════════════════
-
-zip_data <- read_csv("zip_median_prices.csv", show_col_types = FALSE) %>%
-  filter(zip_code != 0) %>%
-  mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0"))
-
-cat("Valid zip codes:", n_distinct(zip_data$zip_code), "\n")
-
-if (file.exists("hhi_zcta.csv")) {
-  # Load from cache — avoids Census API which occasionally times out
-  hhi_zcta <- read_csv("hhi_zcta.csv", show_col_types = FALSE)
-  cat("Loaded ZCTA HHI from cache:", nrow(hhi_zcta), "zip codes\n")
-} else {
-  cat("Cache not found — pulling from Census API...\n")
-  zcta_resp <- GET(paste0(
-    "https://api.census.gov/data/2023/acs/acs5",
-    "?get=NAME,B19013_001E",
-    "&for=zip%20code%20tabulation%20area:*",
-    "&key=", CENSUS_API_KEY
-  ))
-  zcta_raw  <- fromJSON(content(zcta_resp, "text", encoding = "UTF-8"))
-  hhi_zcta  <- as_tibble(zcta_raw[-1, ], .name_repair = "minimal") %>%
-    setNames(zcta_raw[1, ]) %>%
-    transmute(
-      zip_code = `zip code tabulation area`,
-      zcta_hhi = as.numeric(B19013_001E)
-    ) %>%
-    filter(zip_code %in% zip_data$zip_code, !is.na(zcta_hhi), zcta_hhi > 0)
-  write_csv(hhi_zcta, "hhi_zcta.csv")
-  cat("Saved hhi_zcta.csv\n")
-}
-
-# Join HHI to zip summary — affordability calculation deferred to Step 6
-# (requires FRED mortgage rate which is not loaded until Step 4)
-zip_data <- zip_data %>%
-  { if (!"zcta_hhi" %in% names(.))
-    left_join(., hhi_zcta, by = "zip_code")
-    else . }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 4: FRED — 30-YEAR FIXED MORTGAGE RATE
@@ -200,7 +158,7 @@ cat("Rate range:", round(min(rates_raw$mortgage_rate), 2),
 # luxury tier capped at $15M (removes 32 data entry errors, 0.6% of luxury)
 # ══════════════════════════════════════════════════════════════════════════════
 
-sdf_raw <- read_csv("sdf_indiana.csv", show_col_types = FALSE) %>%
+sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"), show_col_types = FALSE) %>%
   filter(!(price_segment == "luxury" & sale_price > 15000000))
 
 sdf_counts <- sdf_raw %>%
@@ -280,15 +238,33 @@ panel_data <- redfin %>%
     trans_per_capita = (transactions_total / population) * 1000
   )
 
-# ZIP affordability uses December 2025 FRED rate — most recent observed rate in dataset
-# Represents actual borrowing cost at end of study period (not a forecast)
+# ZIP affordability uses the most recent available FRED rate in the dataset.
+# Targets December 2025; falls back to the latest observed month if unavailable
+# (e.g., data lag when pipeline is re-run mid-year).
 
-dec_2025_rate <- rates_raw %>%
-  filter(year == 2025, month == 12) %>%
-  pull(mortgage_rate) / 100
+dec_2025_row <- rates_raw %>% filter(year == 2025, month == 12)
 
-cat("\nZip affordability rate (Dec 2025 FRED):",
+if (nrow(dec_2025_row) == 1) {
+  dec_2025_rate <- dec_2025_row$mortgage_rate / 100
+} else {
+  dec_2025_rate <- rates_raw %>%
+    slice_max(order_by = year * 100 + month, n = 1) %>%
+    pull(mortgage_rate) / 100
+  cat("WARNING: Dec 2025 FRED rate not available — using most recent month.\n")
+}
+
+cat("\nZip affordability rate (FRED end-of-study):",
     scales::percent(dec_2025_rate, accuracy = 0.01), "\n")
+
+# ── Load zip-level data for affordability enrichment ─────────────────────────
+# hhi_zcta.csv was produced by 00_data_pipeline.py (Step 3c) and is already
+# joined into zip_median_prices.csv, so zcta_hhi is available directly.
+zip_data <- read_csv(here::here("data/processed/zip_median_prices.csv"),
+                     show_col_types = FALSE) %>%
+  filter(zip_code != 0) %>%
+  mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0"))
+
+cat("Zip codes for affordability enrichment:", n_distinct(zip_data$zip_code), "\n")
 
 zip_data_enriched <- zip_data %>%
   mutate(
@@ -311,8 +287,8 @@ zip_data_enriched %>%
   ) %>%
   print()
 
-write_csv(zip_data_enriched, "zip_median_prices.csv")
-cat("Saved zip_median_prices.csv\n")
+write_csv(zip_data_enriched, here::here("data/processed/zip_median_prices.csv"))
+cat("Saved data/processed/zip_median_prices.csv\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 7: SANITY CHECKS
@@ -380,9 +356,9 @@ cat("\n── Panel dimensions:", nrow(panel_data), "rows ×", ncol(panel_data),
 # STEP 8: SAVE
 # ══════════════════════════════════════════════════════════════════════════════
 
-saveRDS(panel_data, "panel_data.rds")    # preserves factor levels and types
-write_csv(panel_data, "panel_data.csv")  # portable for inspection and sharing
+saveRDS(panel_data, here::here("data/processed/panel_data.rds"))    # preserves factor levels and types
+write_csv(panel_data, here::here("data/processed/panel_data.csv"))  # portable for inspection and sharing
 
-cat("\nSaved: panel_data.rds + panel_data.csv\n")
-cat("Downstream scripts: 02_eda_descriptive_statistics.R,",
-    "03_regression_hypothesis_tests_forecast.R\n")
+cat("\nSaved: data/processed/panel_data.rds + data/processed/panel_data.csv\n")
+cat("Downstream scripts: 02_eda_descriptive_stats.R,",
+    "03_regression_hypothesis_tests.R\n")

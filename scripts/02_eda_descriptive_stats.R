@@ -25,13 +25,28 @@
 
 # ── Package setup ─────────────────────────────────────────────────────────────
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, scales, modelsummary, zoo)
+pacman::p_load(tidyverse, scales, modelsummary, zoo, here, webshot2)
+
+# ── Analysis constants ────────────────────────────────────────────────────────
+LTV_RATIO <- 0.80    # 80% LTV assumption for affordability calculation
+MIN_PRICE <- 50000   # $50K — removes implausible deed transfers
+luxury_CAP <- 15e6   # $15M — removes data entry errors from luxury tier
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-panel_data <- readRDS("panel_data.rds")
+panel_data <- readRDS(here::here("data/processed/panel_data.rds"))
 
-sdf_raw <- read_csv("sdf_indiana.csv", show_col_types = FALSE) %>%
-  filter(!(price_segment == "luxury" & sale_price > 15000000))
+sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"),
+                    show_col_types = FALSE) %>%
+  filter(!(price_segment == "luxury" & sale_price > luxury_CAP))
+
+# ── Lookup tables derived from panel_data (mirrors 03_regression setup) ───────
+county_controls <- panel_data %>%
+  distinct(county, geography, median_hhi, population) %>%
+  mutate(county = as.character(county))
+
+rate_lookup <- panel_data %>%
+  distinct(year, month, mortgage_rate, rate_gap, post) %>%
+  mutate(year = as.integer(year))
 
 # ── Build SDF transaction-level dataset ──────────────────────────────────────
 sdf <- sdf_raw %>%
@@ -59,6 +74,8 @@ sdf <- sdf_raw %>%
     geography           = relevel(factor(geography),   ref = "metro")
   ) %>%
   filter(!is.na(rate_gap), !is.na(sale_price), sale_price > MIN_PRICE)
+
+n_sdf <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 
 cat("Unit of analysis 1: County-month cell —", nrow(panel_data), "obs\n")
 cat("Unit of analysis 2: Individual deed record —", nrow(sdf), "transactions\n\n")
@@ -118,8 +135,9 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave("fig1_rate_gap.png", width = 9, height = 4.5, dpi = 300)
-cat("Saved fig1_rate_gap.png\n")
+ggsave(here::here("outputs/figures/fig1_rate_gap.png"), width = 9, height = 4.5, dpi = 300)
+ggsave(here::here("outputs/figures/fig1_rate_gap.pdf"), width = 9, height = 4.5)
+cat("Saved fig1_rate_gap.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 2 — DOM histogram: pre vs post rate shock
@@ -153,8 +171,9 @@ panel_data %>%
   theme_squeeze +
   theme(strip.text.y = element_text(angle = 0))
 
-ggsave("fig2_dom_histogram.png", width = 10, height = 6, dpi = 300)
-cat("Saved fig2_dom_histogram.png\n")
+ggsave(here::here("outputs/figures/fig2_dom_histogram.png"), width = 10, height = 6, dpi = 300)
+ggsave(here::here("outputs/figures/fig2_dom_histogram.pdf"), width = 10, height = 6)
+cat("Saved fig2_dom_histogram.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 3 — DOM over time: Marion vs suburbs
@@ -197,8 +216,9 @@ panel_data %>%
     panel.grid.minor = element_blank()
   )
 
-ggsave("fig3_dom_over_time.png", width = 10, height = 5, dpi = 300)
-cat("Saved fig3_dom_over_time.png\n")
+ggsave(here::here("outputs/figures/fig3_dom_over_time.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig3_dom_over_time.pdf"), width = 10, height = 5)
+cat("Saved fig3_dom_over_time.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 4 — Avg sale-to-list ratio by price segment and geography
@@ -233,8 +253,9 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave("fig4_sale_to_list.png", width = 10, height = 5, dpi = 300)
-cat("Saved fig4_sale_to_list.png\n")
+ggsave(here::here("outputs/figures/fig4_sale_to_list.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig4_sale_to_list.pdf"), width = 10, height = 5)
+cat("Saved fig4_sale_to_list.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 4b — Seller market stress: sold above list vs price drops
@@ -284,8 +305,9 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave("fig4b_seller_stress.png", width = 11, height = 5, dpi = 300)
-cat("Saved fig4b_seller_stress.png\n")
+ggsave(here::here("outputs/figures/fig4b_seller_stress.png"), width = 11, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig4b_seller_stress.pdf"), width = 11, height = 5)
+cat("Saved fig4b_seller_stress.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 5 — Transaction volume by price segment
@@ -331,8 +353,9 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave("fig5_transaction_volume.png", width = 10, height = 5, dpi = 300)
-cat("Saved fig5_transaction_volume.png\n")
+ggsave(here::here("outputs/figures/fig5_transaction_volume.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig5_transaction_volume.pdf"), width = 10, height = 5)
+cat("Saved fig5_transaction_volume.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 6 — Affordability ratio by county over time
@@ -372,8 +395,9 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave("fig6_affordability.png", width = 10, height = 5, dpi = 300)
-cat("Saved fig6_affordability.png\n")
+ggsave(here::here("outputs/figures/fig6_affordability.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig6_affordability.pdf"), width = 10, height = 5)
+cat("Saved fig6_affordability.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 7 — Parallel trends check using log sale price (main DV)
@@ -428,8 +452,9 @@ sdf %>%
   ) +
   theme_squeeze
 
-ggsave("fig7_parallel_trends.png", width = 9, height = 5, dpi = 300)
-cat("Saved fig7_parallel_trends.png\n")
+ggsave(here::here("outputs/figures/fig7_parallel_trends.png"), width = 9, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig7_parallel_trends.pdf"), width = 9, height = 5)
+cat("Saved fig7_parallel_trends.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 8 — Price index by segment: 2021 = 100
@@ -488,8 +513,9 @@ sdf %>%
   ) +
   theme_squeeze
 
-ggsave("fig8_price_index.png", width = 10, height = 5, dpi = 300)
-cat("Saved fig8_price_index.png\n")
+ggsave(here::here("outputs/figures/fig8_price_index.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig8_price_index.pdf"), width = 10, height = 5)
+cat("Saved fig8_price_index.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABLE 1 — Descriptive statistics by geography
@@ -557,21 +583,23 @@ datasummary(
       }
     })
   },
-  output = "table1_descriptive.html"
+  output = here::here("outputs/tables/table1_descriptive.html")
 )
 
 # Render HTML table to PNG via webshot2
-library(webshot2)
+tbl1_html <- here::here("outputs/tables/table1_descriptive.html")
+tbl1_png  <- here::here("outputs/tables/table1_descriptive.png")
 webshot2::webshot(
-  url      = paste0("file://", file.path(getwd(), "table1_descriptive.html")),
-  file     = "table1_descriptive.png",
+  url      = paste0("file://", tbl1_html),
+  file     = tbl1_png,
   delay    = 2,
   zoom     = 2,
   vwidth   = 1200,
   vheight  = 600,
   cliprect = "viewport"
 )
-cat("Saved table1_descriptive.png\n")
+file.remove(tbl1_html)
+cat("Saved outputs/tables/table1_descriptive.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 12 — HHI vs median sale price correlation by ZIP code
@@ -579,7 +607,9 @@ cat("Saved table1_descriptive.png\n")
 # Hamilton clusters top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-zip_data <- read_csv("zip_median_prices.csv", show_col_types = FALSE) %>%
+# Read once; derive raw_hhi before imputation to count missing values (P3-1).
+zip_raw <- read_csv(here::here("data/processed/zip_median_prices.csv"),
+                    show_col_types = FALSE) %>%
   filter(zip_code != 0) %>%
   mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0")) %>%
   filter(!is.na(median_sale_price)) %>%
@@ -587,10 +617,15 @@ zip_data <- read_csv("zip_median_prices.csv", show_col_types = FALSE) %>%
   summarise(
     county            = county[which.max(transactions)],
     median_sale_price = weighted.mean(median_sale_price, transactions),
-    zcta_hhi          = first(zcta_hhi[!is.na(zcta_hhi)]),
+    raw_hhi           = first(zcta_hhi[!is.na(zcta_hhi)]),  # pre-imputation HHI
     transactions      = sum(transactions),
     .groups           = "drop"
-  ) %>%
+  )
+
+n_imputed <- sum(is.na(zip_raw$raw_hhi))
+
+zip_data <- zip_raw %>%
+  rename(zcta_hhi = raw_hhi) %>%
   # Impute missing zcta_hhi with county-level median HHI
   group_by(county) %>%
   mutate(zcta_hhi = if_else(is.na(zcta_hhi),
@@ -599,29 +634,6 @@ zip_data <- read_csv("zip_median_prices.csv", show_col_types = FALSE) %>%
   ungroup()
 
 cat("Unique zip codes:", nrow(zip_data), "\n")
-cat("Zips with imputed HHI:", sum(is.na(
-  read_csv("zip_median_prices.csv", show_col_types = FALSE) %>%
-    filter(zip_code != 0) %>%
-    mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0")) %>%
-    group_by(zip_code) %>%
-    summarise(zcta_hhi = first(zcta_hhi[!is.na(zcta_hhi)]),
-              .groups = "drop") %>%
-    pull(zcta_hhi)
-)), "\n")
-
-# ── Compute n_imputed before plot ─────────────────────────────────────────────
-n_imputed <- zip_data %>%
-  left_join(
-    read_csv("zip_median_prices.csv", show_col_types = FALSE) %>%
-      filter(zip_code != 0) %>%
-      mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0")) %>%
-      group_by(zip_code) %>%
-      summarise(raw_hhi = first(zcta_hhi[!is.na(zcta_hhi)]), .groups = "drop"),
-    by = "zip_code"
-  ) %>%
-  summarise(n = sum(is.na(raw_hhi))) %>%
-  pull(n)
-
 cat("Zips with imputed HHI:", n_imputed, "\n")
 
 # ── Recompute overall_cor on deduplicated zip_data ────────────────────────────
@@ -678,11 +690,14 @@ zip_data %>%
     panel.grid.minor = element_blank()
   )
 
-ggsave("fig12_hhi_price_correlation.png", width = 9, height = 6, dpi = 300)
-cat("Saved fig12_hhi_price_correlation.png\n")
+ggsave(here::here("outputs/figures/fig12_hhi_price_correlation.png"),
+       width = 9, height = 6, dpi = 300)
+ggsave(here::here("outputs/figures/fig12_hhi_price_correlation.pdf"),
+       width = 9, height = 6)
+cat("Saved fig12_hhi_price_correlation.png/.pdf\n")
 
-# Save correlation stats for regression/hypothesis test/forecast reference
+# Save correlation stats for regression/hypothesis test reference
 saveRDS(list(r = round(overall_cor, 3),
              r2 = round(overall_cor^2, 3),
              n_zip = nrow(zip_data)),
-        "fig12_correlation_stats.rds")
+        here::here("data/processed/fig12_correlation_stats.rds"))

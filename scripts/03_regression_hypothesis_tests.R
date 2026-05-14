@@ -31,7 +31,8 @@
 
 # ── Package setup ─────────────────────────────────────────────────────────────
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, modelsummary, lmtest, sandwich, scales, webshot)
+pacman::p_load(tidyverse, modelsummary, lmtest, sandwich, scales, webshot2,
+               here, sf, tigris, ggrepel)
 
 # ── Analysis constants ────────────────────────────────────────────────────────
 RATE_BASELINE <- 3.0     # 2021 avg 30-yr fixed rate used as lock-in baseline
@@ -40,9 +41,10 @@ MIN_PRICE     <- 50000   # $50K — removes implausible deed transfers
 LTV_RATIO     <- 0.80    # 80% LTV assumption for affordability calculation
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-panel_data <- readRDS("panel_data.rds")
+panel_data <- readRDS(here::here("data/processed/panel_data.rds"))
 
-sdf_raw <- read_csv("sdf_indiana.csv", show_col_types = FALSE) %>%
+sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"),
+                    show_col_types = FALSE) %>%
   filter(!(price_segment == "luxury" & sale_price > luxury_CAP))
 
 # ── Factor releveling — entry tier and metro as reference groups ──────────────
@@ -98,6 +100,9 @@ sdf <- sdf_raw %>%
   ) %>%
   filter(!is.na(rate_gap), !is.na(sale_price), sale_price > MIN_PRICE)
 
+n_sdf   <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
+n_label <- n_sdf
+
 cat("Unit of analysis 1: County-month cell —", nrow(panel_data), "obs\n")
 cat("Unit of analysis 2: Individual deed record —", nrow(sdf), "transactions\n\n")
 
@@ -111,7 +116,6 @@ median_log   <- median(sdf$log_sale_price, na.rm = TRUE)
 median_price <- exp(median_log)
 median_label <- paste0("$", round(median_price / 1000, 0), "K")
 entry_pct    <- round(sum(sdf$price_segment == "entry") / nrow(sdf) * 100, 0)
-n_label      <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 
 sdf %>%
   ggplot(aes(x = log_sale_price)) +
@@ -152,8 +156,9 @@ sdf %>%
     panel.grid.minor      = element_blank()
   )
 
-ggsave("fig_histogram_price.png", width = 9, height = 5, dpi = 300)
-cat("Saved fig_histogram_price.png — median:", median_label, "\n")
+ggsave(here::here("outputs/figures/fig_histogram_price.png"), width = 9, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig_histogram_price.pdf"), width = 9, height = 5)
+cat("Saved fig_histogram_price.png/.pdf — median:", median_label, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SCATTERPLOT NOTE — HHI vs median sale price
@@ -162,8 +167,8 @@ cat("Saved fig_histogram_price.png — median:", median_label, "\n")
 # Illustrates two-mechanism hypothesis: Marion clusters bottom-left (income-constrained), Hamilton top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-fig12_stats <- readRDS("fig12_correlation_stats.rds")
-cat("Rubric 6a: r =", fig12_stats$r,
+fig12_stats <- readRDS(here::here("data/processed/fig12_correlation_stats.rds"))
+cat("ZIP-level HHI-price correlation: r =", fig12_stats$r,
     "| R² =", fig12_stats$r2,
     "| N =", fig12_stats$n_zip, "zip codes\n\n")
 
@@ -292,15 +297,15 @@ datasummary_df(
     "Means transformed back to dollars \u00b7 N = ", n_label,
     " \u00b7 *** p<0.001 ** p<0.01 * p<0.05"
   ),
-  output = "table5_hypothesis_test.html"
+  output = here::here("outputs/tables/table5_hypothesis_test.html")
 )
-cat("Saved table5_hypothesis_test.html\n")
 
 webshot2::webshot(
-  url   = paste0("file://", file.path(getwd(), "table5_hypothesis_test.html")),
-  file  = "table5_hypothesis_test.png",
+  url   = paste0("file://", here::here("outputs/tables/table5_hypothesis_test.html")),
+  file  = here::here("outputs/tables/table5_hypothesis_test.png"),
   delay = 2, zoom = 1.5, vwidth = 1200
 )
+file.remove(here::here("outputs/tables/table5_hypothesis_test.html"))
 cat("Saved table5_hypothesis_test.png\n")
 
 # ══ STANDARD ERROR + CORRELATION ═════════════════════════════════════════════
@@ -342,14 +347,15 @@ datasummary_correlation(
     "Aggregation to ZIP code smooths this noise, revealing the income-price relationship. ",
     "Both values are correct at their respective units of analysis."
   ),
-  output = "table6_correlation.html"
+  output = here::here("outputs/tables/table6_correlation.html")
 )
 webshot2::webshot(
-  url   = paste0("file://", file.path(getwd(), "table6_correlation.html")),
-  file  = "table6_correlation.png",
+  url   = paste0("file://", here::here("outputs/tables/table6_correlation.html")),
+  file  = here::here("outputs/tables/table6_correlation.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-cat("Saved table6_correlation.png\n")
+file.remove(here::here("outputs/tables/table6_correlation.html"))
+cat("Saved outputs/tables/table6_correlation.png\n")
 
 se_table <- sdf %>%
   mutate(Segment = case_when(
@@ -375,14 +381,15 @@ datasummary_df(
   title  = "Table 6b: Standard Error of Log Sale Price by Price Segment",
   notes  = paste0("SE = SD / \u221aN \u00b7 95% CI = mean \u00b1 1.96 \u00d7 SE \u00b7 ",
                   "DV = log sale price \u00b7 N = ", n_label),
-  output = "table6b_standard_error.html",
+  output = here::here("outputs/tables/table6b_standard_error.html"),
   fmt    = 3
 )
 webshot2::webshot(
-  url   = paste0("file://", file.path(getwd(), "table6b_standard_error.html")),
-  file  = "table6b_standard_error.png",
+  url   = paste0("file://", here::here("outputs/tables/table6b_standard_error.html")),
+  file  = here::here("outputs/tables/table6b_standard_error.png"),
   delay = 2, zoom = 1.5, vwidth = 1000
 )
+file.remove(here::here("outputs/tables/table6b_standard_error.html"))
 cat("Saved table6b_standard_error.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -583,7 +590,7 @@ modelsummary(
     "Redfin county-month panel (N=300). HC1 robust SEs. ",
     "DOM subject to delist-relist gaming — lower bound interpretation."
   ),
-  output    = "table2_dom_models.html"
+  output    = here::here("outputs/tables/table2_dom_models.html")
 )
 
 # ── TABLE 3: SDF price models — core squeeze evidence ────────────────────────
@@ -606,7 +613,7 @@ modelsummary(
     "OVB candidates: new construction (Hamilton County Eli Lilly/Amazon expansion), ",
     "school district premiums (Carmel/Fishers), corporate relocations."
   ),
-  output    = "table3_price_models.html"
+  output    = here::here("outputs/tables/table3_price_models.html")
 )
 
 # ── TABLE 4: DiD models ────────────────────────────────────────────────────────
@@ -629,18 +636,21 @@ modelsummary(
     "Geography is imperfect proxy for buyer type — HMDA data needed. ",
     "Marion income constraint ($63K HHI) implies conservative lower bounds."
   ),
-  output    = "table4_did_models.html"
+  output    = here::here("outputs/tables/table4_did_models.html")
 )
 
-cat("Saved: table2, table3, table4\n")
+cat("Saved: table2, table3, table4 HTML — rendering to PNG\n")
 
 for (tbl in c("table2_dom_models", "table3_price_models", "table4_did_models")) {
+  tbl_html <- here::here("outputs/tables", paste0(tbl, ".html"))
+  tbl_png  <- here::here("outputs/tables", paste0(tbl, ".png"))
   webshot2::webshot(
-    url   = paste0("file://", file.path(getwd(), paste0(tbl, ".html"))),
-    file  = paste0(tbl, ".png"),
+    url   = paste0("file://", tbl_html),
+    file  = tbl_png,
     delay = 2, zoom = 1.5, vwidth = 1200
   )
-  cat("Saved", paste0(tbl, ".png"), "\n")
+  file.remove(tbl_html)
+  cat("Saved outputs/tables/", paste0(tbl, ".png"), "\n")
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -655,7 +665,6 @@ slope_midlux <- round((exp(coef_price["rate_gap"] +
 slope_luxury  <- round((exp(coef_price["rate_gap"] +
                               coef_price["rate_gap:price_segmentluxury"]) - 1) * 100, 1)
 
-n_sdf        <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 luxury_annual <- round(sum(sdf$price_segment == "luxury") /
                          (length(unique(sdf$county)) *
                             length(unique(as.character(sdf$year)))), 0)
@@ -803,7 +812,8 @@ scale_color_manual(
     plot.margin      = margin(5, 50, 5, 5, "pt")
   )
 
-ggsave("fig9_marginal_effects_updated.png", width = 10, height = 5.5, dpi = 300)
+ggsave(here::here("outputs/figures/fig9_marginal_effects_updated.png"), width = 10, height = 5.5, dpi = 300)
+ggsave(here::here("outputs/figures/fig9_marginal_effects_updated.pdf"), width = 10, height = 5.5)
 cat("Saved fig9_marginal_effects_updated.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -848,44 +858,41 @@ datasummary_df(
     "Current gap based on NAR Base scenario (6.1% mortgage rate vs 3% baseline). ",
     "Adj R\u00b2 = ", round(summary(m_price_interact)$adj.r.squared, 3), "."
   ),
-  output = "table_rate_sensitivity.html"
+  output = here::here("outputs/tables/table_rate_sensitivity.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", file.path(getwd(), "table_rate_sensitivity.html")),
-  file  = "table_rate_sensitivity.png",
+  url   = paste0("file://", here::here("outputs/tables/table_rate_sensitivity.html")),
+  file  = here::here("outputs/tables/table_rate_sensitivity.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-cat("Saved table_rate_sensitivity.png\n")
+file.remove(here::here("outputs/tables/table_rate_sensitivity.html"))
+cat("Saved outputs/tables/table_rate_sensitivity.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 10 — Geospatial Map: The Indy Squeeze (Zip-Level)
 # ZIP-level price-to-income stress ratio mapped using national ZCTA shapefiles
 # ══════════════════════════════════════════════════════════════════════════════
 
-library(tidyverse)
-library(sf)
-library(tigris)
-library(scales)
-library(ggrepel)
-
 options(tigris_use_cache = TRUE)
 
 # 1. PREP THE SDF PRICE DATA
 # ---------------------------------------------------------
 # guess_max = 200000 prevents the parsing warnings by scanning all rows first
-zip_prices <- read_csv("sdf_indiana.csv", guess_max = 200000) %>%
+zip_prices <- read_csv(here::here("data/processed/sdf_indiana.csv"),
+                       guess_max = 200000) %>%
   mutate(zip_code = str_pad(as.character(zip_code), width = 5, pad = "0")) %>%
   group_by(zip_code) %>%
   summarise(
-    median_sale_price = median(sale_price, na.rm = TRUE),
+    median_sale_price  = median(sale_price, na.rm = TRUE),
     total_transactions = n(),
     .groups = "drop"
   )
 
 # 2. PREP THE INCOME DATA
 # ---------------------------------------------------------
-zip_income <- read_csv("hhi_zcta.csv", show_col_types = FALSE) %>%
+zip_income <- read_csv(here::here("data/processed/hhi_zcta.csv"),
+                       show_col_types = FALSE) %>%
   mutate(zip_code = str_pad(as.character(zip_code), width = 5, pad = "0"))
 
 # 3. COMBINE AND CALCULATE STRESS RATIO
@@ -893,8 +900,8 @@ zip_income <- read_csv("hhi_zcta.csv", show_col_types = FALSE) %>%
 df_map_final <- zip_prices %>%
   inner_join(zip_income, by = "zip_code") %>%
   mutate(stress_ratio = median_sale_price / zcta_hhi) %>%
-  # Filter strictly for the Indy Metro
-  filter(str_starts(zip_code, "460|461|462"))
+  # Filter strictly for the Indy Metro (ZIP prefixes 460, 461, 462)
+  filter(str_detect(zip_code, "^(460|461|462)"))
 
 # 4. FETCH CENSUS ZCTA SHAPEFILES
 # ---------------------------------------------------------
@@ -907,58 +914,65 @@ us_zctas <- zctas(year = 2020, cb = TRUE)
 map_data <- us_zctas %>%
   inner_join(df_map_final, by = c("GEOID20" = "zip_code"))
 
-highlight_zips <- map_data %>% 
+highlight_zips <- map_data %>%
   filter(GEOID20 %in% c("46202", "46236")) %>%
   mutate(centroid = st_centroid(geometry))
 
 # 6. BUILD THE MAP
 # ---------------------------------------------------------
-ibj_squeeze_map <- ggplot(data = map_data) +
+indy_squeeze_map <- ggplot(data = map_data) +
   geom_sf(aes(fill = stress_ratio), color = "white", size = 0.1) +
   scale_fill_gradientn(
     colors = c("#4472C4", "#F2F2F2", "#ED7D31", "#C00000"),
-    values = rescale(c(2, 4, 6, 9)), 
+    values = rescale(c(2, 4, 6, 9)),
     name = "Affordability Stress Ratio\n(Price / Income)",
     breaks = c(2, 4, 6, 8),
     labels = c("2.0x", "4.0x", "6.0x", "8.0x+")
   ) +
   geom_label_repel(
     data = highlight_zips,
-    aes(geometry = centroid, 
+    aes(geometry = centroid,
         label = paste0("Zip: ", GEOID20, "\nRatio: ", round(stress_ratio, 1), "x")),
     stat = "sf_coordinates",
     size = 3.5, fontface = "bold", fill = alpha("white", 0.9),
     box.padding = 0.8, segment.color = "grey30"
   ) +
   labs(
-    title = "The Indy Squeeze: Housing Vulnerability by Zip Code",
-    subtitle = "Calculated using the full population of STATS Indiana SDF Transactions (2021-2025).\nAreas in dark red face the most severe price-to-income decoupling.",
-    caption = "Source: STATS Indiana SDF & U.S. Census Bureau (ZCTA HHI).\nAnalysis by Phil Johnson, MBA"
+    title    = "The Indy Squeeze: Housing Vulnerability by Zip Code",
+    subtitle = paste0("Calculated using the full population of STATS Indiana SDF Transactions",
+                      " (2021-2025).\nAreas in dark red face the most severe price-to-income",
+                      " decoupling."),
+    caption  = "Source: STATS Indiana SDF & U.S. Census Bureau (ZCTA HHI)."
   ) +
   theme_void(base_size = 14) +
   theme(
-    plot.title = element_text(face = "bold", size = 18, margin = margin(b = 5)),
+    plot.title    = element_text(face = "bold", size = 18, margin = margin(b = 5)),
     plot.subtitle = element_text(color = "grey30", size = 11, margin = margin(b = 20)),
     legend.position = "right",
-    plot.margin = margin(20, 20, 20, 20, "pt")
+    plot.margin   = margin(20, 20, 20, 20, "pt")
   )
 
 # 7. EXPORT
 # ---------------------------------------------------------
-ggsave("fig10_zip_squeeze_map.png", plot = ibj_squeeze_map, width = 10, height = 8, dpi = 300, bg = "white")
+ggsave(here::here("outputs/figures/fig10_zip_squeeze_map.png"),
+       plot = indy_squeeze_map, width = 10, height = 8, dpi = 300, bg = "white")
+ggsave(here::here("outputs/figures/fig10_zip_squeeze_map.pdf"),
+       plot = indy_squeeze_map, width = 10, height = 8)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SAVE MODELS FOR REPRODUCIBILITY
 # ══════════════════════════════════════════════════════════════════════════════
 
-saveRDS(m_price_interact,    "m_price_interact.rds")
-saveRDS(m_did_price_triple,  "m_did_price_triple.rds")
-saveRDS(m_did_volume_triple, "m_did_volume_triple.rds")
+saveRDS(m_price_interact,    here::here("data/processed/m_price_interact.rds"))
+saveRDS(m_did_price_triple,  here::here("data/processed/m_did_price_triple.rds"))
+saveRDS(m_did_volume_triple, here::here("data/processed/m_did_volume_triple.rds"))
 
-cat("Figures: fig_histogram_price, fig9")
-cat("Tables:  table_forecase.html, table2_dom_models.html, table3_price_models.html,",
-    "table4_did_models.html, table5_hypothesis_test.html,",
-    "table6_correlation.html, table6b_standard_error.html\n")
-cat("Models:  m_price_interact.rds, m_did_price_triple.rds,",
+cat("Figures: outputs/figures/fig_histogram_price.png/.pdf, fig9.png/.pdf,",
+    "fig10.png/.pdf\n")
+cat("Tables:  outputs/tables/table2_dom_models.png, table3_price_models.png,",
+    "table4_did_models.png, table5_hypothesis_test.png,",
+    "table6_correlation.png, table6b_standard_error.png,",
+    "table_rate_sensitivity.png\n")
+cat("Models:  data/processed/m_price_interact.rds, m_did_price_triple.rds,",
     "m_did_volume_triple.rds\n")

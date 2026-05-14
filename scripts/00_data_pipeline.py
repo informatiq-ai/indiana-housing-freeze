@@ -1,5 +1,5 @@
 """
-data_pipeline.py
+00_data_pipeline.py
 ────────────────────────────────────────────────────────────────────────────────
 Indiana Mid-Luxury Housing Study — Clean Data Pipeline
 
@@ -17,43 +17,52 @@ Methodology:
                           into luxury; natural breaks at ~$388K and ~$1.04M
 
 Outputs:
-  sdf_indiana.csv      — transaction-level cleaned data
-  zip_median_prices.csv      — zip-level summary for mapping
+  sdf_indiana.csv       — transaction-level cleaned data
+  zip_median_prices.csv — zip-level summary for mapping
+  hhi_zcta.csv          — ZCTA-level median household income (Census ACS 2023 5-yr)
 """
 
 import os
+import requests
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-# Download Redfin data
-url = "https://redfin-public-data.s3.us-west-2.amazonaws.com/redfin_market_tracker/county_market_tracker.tsv000.gz"
-
+# Download and cache Redfin data — skip download if cache already exists
+REDFIN_CACHE = "data/processed/redfin_indiana.csv"
+REDFIN_URL   = (
+    "https://redfin-public-data.s3.us-west-2.amazonaws.com/"
+    "redfin_market_tracker/county_market_tracker.tsv000.gz"
+)
 target_counties = ["Marion", "Hamilton", "Boone", "Hendricks", "Johnson"]
 
-print("Downloading... this may take a few minutes")
+if os.path.exists(REDFIN_CACHE):
+    print(f"Redfin cache found — skipping download ({REDFIN_CACHE})")
+else:
+    print("Downloading Redfin national tracker... this may take a few minutes")
+    df = pd.read_csv(
+        REDFIN_URL,
+        sep="\t",
+        compression="gzip",
+        na_values=["", "NA", "--"],
+        low_memory=False
+    )
+    print(f"Full file loaded: {df.shape[0]:,} rows")
 
-df = pd.read_csv(
-    url,
-    sep="\t",
-    compression="gzip",
-    na_values=["", "NA", "--"],
-    low_memory=False
-)
+    redfin_indiana = df[
+        (df["STATE_CODE"] == "IN") &
+        (df["REGION"].str.contains("|".join(target_counties), na=False))
+    ].copy()
 
-print(f"Full file loaded: {df.shape[0]:,} rows")
-
-redfin_indiana = df[
-    (df["STATE_CODE"] == "IN") &
-    (df["REGION"].str.contains("|".join(target_counties), na=False))
-].copy()
-
-print(f"Indiana filtered: {redfin_indiana.shape[0]:,} rows")
-
-redfin_indiana.to_csv("data/processed/redfin_indiana.csv", index=False)
+    print(f"Indiana filtered: {redfin_indiana.shape[0]:,} rows")
+    redfin_indiana.to_csv(REDFIN_CACHE, index=False)
+    print(f"Cached to {REDFIN_CACHE}")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+
+CENSUS_API_KEY  = os.environ.get("CENSUS_API_KEY", "")
+HHI_ZCTA_CACHE  = "data/processed/hhi_zcta.csv"
 
 TARGET_COUNTIES = {"MARION", "HAMILTON", "BOONE", "HENDRICKS", "JOHNSON"}
 
@@ -204,6 +213,7 @@ for year in YEARS:
         dtype=str,
         low_memory=False,
     )
+    p["parcel_year"] = year  # track source year for deterministic deduplication
     parcels.append(p)
     print(f"  {fname}: {len(p):,} rows")
 
@@ -213,7 +223,13 @@ parcel_df = parcel_df.rename(columns={
     "P2_6_Prop_Class_Code": "prop_class_code",
     "P2_5_Total_AV":        "total_av",
 })
-parcel_df = parcel_df.drop_duplicates("SDF_ID")
+# Keep the most-recent year's parcel record when an SDF_ID appears across files
+parcel_df = (
+    parcel_df
+    .sort_values("parcel_year", ascending=False)
+    .drop_duplicates("SDF_ID")
+    .drop(columns="parcel_year")
+)
 
 parcel_df["zip_code"] = (
     parcel_df["zip_code"]
@@ -283,6 +299,20 @@ breaks = [
 ]
 print(f"Derived breakpoints: entry/mid_luxury=${breaks[0]:,.0f}  mid_luxury/luxury=${breaks[1]:,.0f}")
 
+# Validate breakpoints against documented values; warn loudly if data drift has
+# shifted them more than the expected tolerance.
+EXPECTED_ENTRY_BREAK  = 388_000
+EXPECTED_LUXURY_BREAK = 1_040_000
+BREAK_TOLERANCE       = 50_000
+if abs(breaks[0] - EXPECTED_ENTRY_BREAK) > BREAK_TOLERANCE:
+    print(f"WARNING: entry/mid_luxury break ${breaks[0]:,.0f} deviates more than "
+          f"${BREAK_TOLERANCE:,} from expected ${EXPECTED_ENTRY_BREAK:,}. "
+          "Re-verify price tier labels and downstream analysis.")
+if abs(breaks[1] - EXPECTED_LUXURY_BREAK) > BREAK_TOLERANCE:
+    print(f"WARNING: mid_luxury/luxury break ${breaks[1]:,.0f} deviates more than "
+          f"${BREAK_TOLERANCE:,} from expected ${EXPECTED_LUXURY_BREAK:,}. "
+          "Re-verify price tier labels and downstream analysis.")
+
 # k-means derived breaks (confirmed run values: $388K / $1.04M)
 PRICE_BINS   = [0, breaks[0], breaks[1], 15_000_000]
 PRICE_LABELS = ["entry", "mid_luxury", "luxury"]
@@ -300,12 +330,60 @@ print(sdf_with_zip["price_segment"].value_counts().sort_index())
 print(f"\nBy county and segment:")
 print(sdf_with_zip.groupby(["county", "price_segment"]).size().unstack(fill_value=0))
 
+# ── Step 3c: ZCTA HHI — Census ACS 2023 5-year ───────────────────────────────
+# Median household income at ZCTA level (B19013_001E).
+# ACS ZCTA endpoint requires a national pull; filtered to study-area zip codes.
+# Cached to hhi_zcta.csv — re-run only if the cache is missing.
+# County-level Census controls (median_hhi, population) are pulled separately
+# in 01_data_pipeline.R — different geography, different analytical purpose.
+
+study_zips = set(
+    sdf_with_zip["zip_code"]
+    .dropna()
+    .loc[lambda s: s != "00000"]
+)
+
+if os.path.exists(HHI_ZCTA_CACHE):
+    hhi_zcta = pd.read_csv(HHI_ZCTA_CACHE, dtype={"zip_code": str})
+    hhi_zcta["zip_code"] = hhi_zcta["zip_code"].str.zfill(5)
+    print(f"Loaded ZCTA HHI from cache: {len(hhi_zcta)} zip codes")
+else:
+    if not CENSUS_API_KEY:
+        raise EnvironmentError(
+            "CENSUS_API_KEY is not set. Export the variable before running "
+            "this script, or place it in a .env file."
+        )
+    print("Fetching ZCTA HHI from Census API (national pull, one-time)...")
+    resp = requests.get(
+        "https://api.census.gov/data/2023/acs/acs5",
+        params={
+            "get": "NAME,B19013_001E",
+            "for": "zip code tabulation area:*",
+            "key": CENSUS_API_KEY,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    raw = resp.json()
+    hhi_zcta = pd.DataFrame(raw[1:], columns=raw[0])
+    hhi_zcta = hhi_zcta.rename(
+        columns={"zip code tabulation area": "zip_code", "B19013_001E": "zcta_hhi"}
+    )[["zip_code", "zcta_hhi"]]
+    hhi_zcta["zcta_hhi"] = pd.to_numeric(hhi_zcta["zcta_hhi"], errors="coerce")
+    hhi_zcta = hhi_zcta[
+        hhi_zcta["zip_code"].isin(study_zips)
+        & hhi_zcta["zcta_hhi"].notna()
+        & (hhi_zcta["zcta_hhi"] > 0)
+    ].copy()
+    hhi_zcta.to_csv(HHI_ZCTA_CACHE, index=False)
+    print(f"Saved {HHI_ZCTA_CACHE}: {len(hhi_zcta)} zip codes")
+
 # ── Step 4: Zip-level summary ─────────────────────────────────────────────────
 
 print("\nBuilding zip-level summary...")
 
 zip_summary = (
-    sdf_with_zip[sdf_with_zip["sale_price"] > 50_000]
+    sdf_with_zip[sdf_with_zip["sale_price"] >= 50_000]
     .groupby(["zip_code", "county"])
     .agg(
         median_sale_price = ("sale_price", "median"),
@@ -316,10 +394,8 @@ zip_summary = (
     .query("transactions >= 10")
 )
 
-# Join ZCTA-level median household income from ACS 2023 5-year estimates
-hhi = pd.read_csv("data/processed/hhi_zcta.csv", dtype={"zip_code": str})
-hhi["zip_code"] = hhi["zip_code"].str.zfill(5)
-zip_summary = zip_summary.merge(hhi, on="zip_code", how="left")
+# Join ZCTA-level median household income — hhi_zcta already loaded in Step 3c
+zip_summary = zip_summary.merge(hhi_zcta, on="zip_code", how="left")
 
 missing_hhi = zip_summary["zcta_hhi"].isna().sum()
 print(f"Zip codes missing HHI: {missing_hhi}")
