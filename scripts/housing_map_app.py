@@ -1,4 +1,4 @@
-# pip install streamlit plotly geopandas
+# pip install streamlit plotly geopandas streamlit-screen-stats
 
 import json
 import streamlit as st
@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import requests
 import numpy as np
 from pathlib import Path
+from st_screen_stats import ScreenData
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -295,7 +296,22 @@ def build_hhi_map(
     zip_data: pd.DataFrame,
     geojson: dict,
     _counties_sub: gpd.GeoDataFrame,
+    is_mobile: bool = False,
 ) -> go.Figure:
+    if is_mobile:
+        colorbar_config = dict(
+            orientation="h", x=0.5, y=-0.05, xanchor="center", yanchor="top",
+            len=0.7, thickness=10, tickfont=dict(size=8),
+            title=dict(font=dict(size=9), side="top"),
+        )
+        margin_config = dict(l=0, r=0, t=10, b=60)
+    else:
+        colorbar_config = dict(
+            orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle",
+            len=0.5, thickness=14, tickfont=dict(size=10),
+            title=dict(font=dict(size=10)),
+        )
+        margin_config = dict(l=0, r=80, t=10, b=10)
     zip_agg, vmin, vmax = _prep_hhi_data(zip_data)
     fig = px.choropleth_map(
         zip_agg,
@@ -325,19 +341,17 @@ def build_hhi_map(
             "<extra></extra>"
         )
     )
-    fig.update_coloraxes(colorbar=dict(
-        title=dict(text="Median HHI<br>(ACS 2023)", font=dict(size=11)),
-        thickness=15, len=0.5,
-        tickfont=dict(size=10),
-        tickformat="$,.0f",
-        x=1.01, y=0.5, xanchor="left", yanchor="middle",
-    ))
     fig.add_trace(_county_outline_trace(_counties_sub))
     fig.add_trace(_city_marker_trace())
     fig.add_trace(_county_label_trace(_counties_sub))
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),
+        margin=margin_config,
         showlegend=False,
+        coloraxis_colorbar={
+            **colorbar_config,
+            "tickformat": "$,.0f",
+            "title": {**colorbar_config["title"], "text": "Median HHI (ACS 2023)"},
+        },
     )
     return fig
 
@@ -346,7 +360,22 @@ def build_sale_price_map(
     zip_data: pd.DataFrame,
     geojson: dict,
     _counties_sub: gpd.GeoDataFrame,
+    is_mobile: bool = False,
 ) -> go.Figure:
+    if is_mobile:
+        colorbar_config = dict(
+            orientation="h", x=0.5, y=-0.05, xanchor="center", yanchor="top",
+            len=0.7, thickness=10, tickfont=dict(size=8),
+            title=dict(font=dict(size=9), side="top"),
+        )
+        margin_config = dict(l=0, r=0, t=10, b=60)
+    else:
+        colorbar_config = dict(
+            orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle",
+            len=0.5, thickness=14, tickfont=dict(size=10),
+            title=dict(font=dict(size=10)),
+        )
+        margin_config = dict(l=0, r=80, t=10, b=10)
     zip_agg, vmin, vmax = _prep_sale_price_data(zip_data)
     fig = px.choropleth_map(
         zip_agg,
@@ -371,19 +400,17 @@ def build_sale_price_map(
             "<extra></extra>"
         )
     )
-    fig.update_coloraxes(colorbar=dict(
-        title=dict(text="Median Sale Price<br>USD (2021–2025)", font=dict(size=11)),
-        thickness=15, len=0.5,
-        tickfont=dict(size=10),
-        tickformat="$,.0f",
-        x=1.01, y=0.5, xanchor="left", yanchor="middle",
-    ))
     fig.add_trace(_county_outline_trace(_counties_sub))
     fig.add_trace(_city_marker_trace())
     fig.add_trace(_county_label_trace(_counties_sub))
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),
+        margin=margin_config,
         showlegend=False,
+        coloraxis_colorbar={
+            **colorbar_config,
+            "tickformat": "$,.0f",
+            "title": {**colorbar_config["title"], "text": "Median Sale Price USD (2021–2025)"},
+        },
     )
     return fig
 
@@ -392,7 +419,22 @@ def build_squeeze_map(
     zip_data: pd.DataFrame,
     geojson: dict,
     _counties_sub: gpd.GeoDataFrame,
+    is_mobile: bool = False,
 ) -> go.Figure:
+    if is_mobile:
+        colorbar_config = dict(
+            orientation="h", x=0.5, y=-0.05, xanchor="center", yanchor="top",
+            len=0.7, thickness=10, tickfont=dict(size=8),
+            title=dict(font=dict(size=9), side="top"),
+        )
+        margin_config = dict(l=0, r=0, t=10, b=60)
+    else:
+        colorbar_config = dict(
+            orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle",
+            len=0.5, thickness=14, tickfont=dict(size=10),
+            title=dict(font=dict(size=10)),
+        )
+        margin_config = dict(l=0, r=80, t=10, b=10)
     zip_agg = _prep_squeeze_data(zip_data)
     fig = px.choropleth_map(
         zip_agg,
@@ -413,38 +455,22 @@ def build_squeeze_map(
             "<b>ZIP %{customdata[0]}</b> — %{customdata[1]}<br>"
             "Median HHI: %{customdata[2]}<br>"
             "Median Sale Price: %{customdata[3]}<br>"
-            "Squeeze Ratio: %{customdata[4]}"
+            "Affordability Stress Ratio: %{customdata[4]}"
             "<extra></extra>"
         )
     )
-    # Tick at 4× is labeled to mark the stress threshold
-    fig.update_coloraxes(colorbar=dict(
-        title=dict(text="Squeeze Ratio<br>(Price ÷ HHI)", font=dict(size=11)),
-        thickness=15, len=0.5,
-        tickfont=dict(size=10),
-        tickvals=[1, 2, 3, 4, 5, 6],
-        ticktext=["1×", "2×", "3×", "4× ◄stress", "5×", "6×"],
-        x=1.01, y=0.5, xanchor="left", yanchor="middle",
-    ))
     fig.add_trace(_county_outline_trace(_counties_sub))
     fig.add_trace(_city_marker_trace())
     fig.add_trace(_county_label_trace(_counties_sub))
-    # Annotate the highest-stress ZIP dynamically so it updates with the data.
-    top_row = zip_agg.loc[zip_agg["stress_ratio"].idxmax()]
-    top_lat, top_lon = _zip_centroid(geojson, top_row["zip_code"])
-    if top_lat is not None:
-        fig.add_trace(go.Scattermap(
-            lat=[top_lat], lon=[top_lon],
-            mode="markers+text",
-            text=[f"{top_row['ratio_display']} — highest stress in metro"],
-            textposition="top right",
-            marker=dict(size=8, color="red", symbol="circle"),
-            textfont=dict(size=11, color="red"),
-            hoverinfo="skip", showlegend=False,
-        ))
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),
+        margin=margin_config,
         showlegend=False,
+        coloraxis_colorbar={
+            **colorbar_config,
+            "tickvals": [1, 2, 3, 4, 5, 6],
+            "ticktext": ["1×", "2×", "3×", "4× ◄stress", "5×", "6×"],
+            "title": {**colorbar_config["title"], "text": "Affordability Stress Ratio (Price ÷ Income)"},
+        },
     )
     return fig
 
@@ -456,6 +482,11 @@ st.set_page_config(
     page_icon="🏠",
     layout="wide",
 )
+
+# Detect viewport width; default to 1200 (desktop) until the component reports back.
+screen_d = ScreenData(setTimeout=500).st_screen_data()
+viewport_width = screen_d.get("innerWidth", 1200) if screen_d else 1200
+is_mobile = viewport_width < 640
 
 st.markdown("""
 <style>
@@ -475,13 +506,13 @@ st.title("Indianapolis Housing Market Analysis")
 MAP_OPTIONS = [
     "Median Household Income",
     "Median Sale Price",
-    "Housing Squeeze Index",
+    "Affordability Stress Ratio",
 ]
 
 MAP_TITLES = {
     "Median Household Income": "Median Household Income · ACS 2023 5-year estimates",
     "Median Sale Price": "Median Sale Price · 2021–2025 (STATS Indiana SDF)",
-    "Housing Squeeze Index": "Housing Squeeze Index · 2021–2025 | 4× = stress threshold",
+    "Affordability Stress Ratio": "Affordability Stress Ratio · 2021–2025 | 4× = stress threshold",
 }
 
 LEDE = {
@@ -495,9 +526,10 @@ LEDE = {
         "between 2021 and 2025. Prices in Johnson County's outer ZIPs remain below $250,000 — "
         "for now."
     ),
-    "Housing Squeeze Index": (
-        "A price-to-income ratio above 4× signals housing stress. Several eastern Marion County "
-        "ZIPs have crossed that threshold. One ZIP exceeds 5.7× — the highest in the metro."
+    "Affordability Stress Ratio": (
+        "The affordability stress ratio measures how many years of household income it takes to "
+        "buy the median home in a ZIP code. Economists set 4× as the affordability stress "
+        "threshold — above it, housing costs begin crowding out other spending."
     ),
 }
 
@@ -505,10 +537,12 @@ ABOUT_TEXT = (
     "Sale price data covers 198,407 arm's-length residential property transfers recorded in "
     "Boone, Hamilton, Hendricks, Marion, and Johnson counties between 2021 and 2025, sourced "
     "from STATS Indiana deed records. Household income figures are ZIP-code level medians from "
-    "the U.S. Census Bureau's 2023 American Community Survey 5-year estimates. The "
-    "price-to-income ratio divides median sale price by median household income for each ZIP "
-    "code. Economists generally consider a ratio above 4× an indicator of housing affordability "
-    "stress."
+    "the U.S. Census Bureau's 2023 American Community Survey 5-year estimates. "
+    "The Affordability Stress Ratio is the price-to-income ratio: median residential sale price "
+    "divided by median household income for each ZIP code. A ratio of 4× means the median home "
+    "costs four years of gross household income. Economists and housing researchers widely use "
+    "4× as the threshold above which housing costs become a financial stressor for typical "
+    "households, constraining spending on healthcare, education, and savings."
 )
 
 if "selected_map" not in st.session_state:
@@ -553,11 +587,11 @@ geojson      = load_zip_geojson_simplified()
 counties_sub = load_county_boundaries()
 
 if selected == MAP_OPTIONS[0]:
-    fig = build_hhi_map(zip_data, geojson, counties_sub)
+    fig = build_hhi_map(zip_data, geojson, counties_sub, is_mobile)
 elif selected == MAP_OPTIONS[1]:
-    fig = build_sale_price_map(zip_data, geojson, counties_sub)
+    fig = build_sale_price_map(zip_data, geojson, counties_sub, is_mobile)
 else:
-    fig = build_squeeze_map(zip_data, geojson, counties_sub)
+    fig = build_squeeze_map(zip_data, geojson, counties_sub, is_mobile)
 
 st.markdown(
     f"<p style='text-align:center; font-size:0.95rem; line-height:1.4; "
