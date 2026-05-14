@@ -534,7 +534,7 @@ LEDE = {
 }
 
 ABOUT_TEXT = (
-    "Sale price data covers 198,407 arm's-length residential property transfers recorded in "
+    "Sale price data covers 271,047 arm's-length residential property transfers recorded in "
     "Boone, Hamilton, Hendricks, Marion, and Johnson counties between 2021 and 2025, sourced "
     "from STATS Indiana deed records. Household income figures are ZIP-code level medians from "
     "the U.S. Census Bureau's 2023 American Community Survey 5-year estimates. "

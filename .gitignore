@@ -11,3 +11,10 @@ data/processed/m_did_volume_triple.rds
 # Generated outputs — never commit; regenerate from scripts
 outputs/interactive/
 outputs/mobile_previews/
+
+# STATS Indiana raw SDF flat files — large (100–300 MB each), not redistributed
+SALEDISC*.txt
+SALEPARCEL*.txt
+
+# Stray R graphics device output
+Rplots.pdf

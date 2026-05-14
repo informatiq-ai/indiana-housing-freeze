@@ -8,11 +8,11 @@ Does mortgage rate lock-in disproportionately suppress mid-luxury transaction vo
 
 ## Key Findings
 
-Mid-luxury properties are 3.9 times more sensitive to the rate lock-in gap than entry-tier homes (−7.1%/pp vs. −1.8%/pp, derived from the price interaction model, N = 198,407). At the current 3.1 percentage point gap above the 2021 baseline, mid-luxury prices are estimated approximately 20% below their pre-shock trajectory. The DiD triple interaction (Suburb × Post × Mid-luxury) is negative and statistically significant (p < 0.01), confirming that suburban mid-luxury properties bear a disproportionate burden from the rate shock. A Welch two-sample t-test shows entry-tier prices appreciated 10.2% post-shock while mid-luxury appreciated only 3%, with both differences rejecting the null hypothesis (p < 2.2e-16). Marion County never produces meaningful mid-luxury volume, not because of rate sensitivity, but because its median household income ($63,450) structurally precludes sustained demand in that price range. The two mechanisms converge on the same market freeze through different channels.
+Mid-luxury properties are 3.9 times more sensitive to the rate lock-in gap than entry-tier homes (−7.1%/pp vs. −1.8%/pp, derived from the price interaction model, N = 271,047). At the current 3.1 percentage point gap above the 2021 baseline, mid-luxury prices are estimated approximately 20% below their pre-shock trajectory. The DiD triple interaction (Suburb × Post × Mid-luxury) is negative and statistically significant (p < 0.01), confirming that suburban mid-luxury properties bear a disproportionate burden from the rate shock. A Welch two-sample t-test shows entry-tier prices appreciated 10.2% post-shock while mid-luxury appreciated only 3%, with both differences rejecting the null hypothesis (p < 2.2e-16). Marion County never produces meaningful mid-luxury volume, not because of rate sensitivity, but because its median household income ($63,450) structurally precludes sustained demand in that price range. The two mechanisms converge on the same market freeze through different channels.
 
 ## Data
 
-**STATS Indiana Sales Disclosure Form (SDF) deed records** provide 198,407 arm's-length residential transactions across five Indianapolis-area counties, 2021–2025. Filters applied: residential-only parcels (C10 flags), arm's-length qualification (B1_Valuable_Consider = Y; no sheriff, short, or quitclaim sales), assessor quality gate (P2_16_Valid_Trending = Y), sale price at or above $50K, and total assessed value above $10K with sales ratio winsorized at the 99th percentile.
+**STATS Indiana Sales Disclosure Form (SDF) deed records** provide 271,047 arm's-length residential transactions across five Indianapolis-area counties, 2021–2025. Filters applied: residential-only parcels (C10 flags), arm's-length qualification (B1_Valuable_Consider = Y; no sheriff, short, or quitclaim sales), and sale price at or above $50K.
 
 **Redfin county market tracker** supplies monthly county-level median sale price, days on market, sale-to-list ratio, months of supply, and seller stress indicators (share sold above list, share with price drops), filtered to the five study counties for 2021–2025.
 
@@ -40,9 +40,9 @@ Price tiers are derived from k-means clustering (k = 4) on log(sale_price), with
 
 | Segment | Price Range | N (2021–2025) |
 |---------|-------------|---------------|
-| Entry | Below $388K | 139,557 |
-| Mid-luxury | $388K to $1M | 55,556 |
-| Luxury | Above $1M | 3,294 |
+| Entry | Below $388K | 187,540 |
+| Mid-luxury | $388K to $1M | 78,666 |
+| Luxury | Above $1M | 4,814 |
 
 ## Identification Strategy
 
@@ -92,7 +92,7 @@ The app provides three switchable views via radio button:
 
 **`scripts/02_eda_descriptive_stats.R`** produces Figures 1 through 8, Figure 12, and Table 1. It loads `panel_data.rds` and `sdf_indiana.csv` and generates descriptive statistics, time series plots, the parallel trends check, price index by segment, affordability ratios, and DOM distributions.
 
-**`scripts/03_regression_hypothesis_tests.R`** estimates all regression models and generates Figure 9 and the squeeze map. Models include DOM regressions on the panel (N = 300), price models on individual deed records (N = 198,407), triple-interaction DiD specifications for price and volume, Welch two-sample t-tests, and the Pearson correlation matrix.
+**`scripts/03_regression_hypothesis_tests.R`** estimates all regression models and generates Figure 9 and the squeeze map. Models include DOM regressions on the panel (N = 300), price models on individual deed records (N = 271,047), triple-interaction DiD specifications for price and volume, Welch two-sample t-tests, and the Pearson correlation matrix.
 
 **`scripts/build_simplified_geojson.py`** pre-computes `data/zip_geojson_simplified.json` from the cached Indiana ZIP GeoJSON. Run once before launching the Streamlit app, and again whenever the source GeoJSON is refreshed.
 
@@ -113,7 +113,7 @@ The app provides three switchable views via radio button:
 | `fig8_price_index.png` | Median sale price indexed to 2021 = 100, by price segment and geography |
 | `fig9_marginal_effects_updated.png` | Predicted price penalty by rate gap and segment; 3.9x squeeze multiplier annotated |
 | `fig12_hhi_price_correlation.png` | ZIP-level median HHI vs. median sale price; r = 0.805, R² = 0.648 (N = 80 ZIP codes) |
-| `fig_histogram_price.png` | Distribution of 198,407 sale prices on log scale; median $299K, entry-tier = 70% of transactions |
+| `fig_histogram_price.png` | Distribution of 271,047 sale prices on log scale; median $293,900, entry-tier = 69.2% of transactions |
 
 ### Tables
 
@@ -121,12 +121,11 @@ The app provides three switchable views via radio button:
 |------|-------------|
 | `table1_descriptive.png` | Descriptive statistics by geography: DOM, sale-to-list, median price, mortgage rate, HHI, population |
 | `table2_dom_models.png` | Regression models for median days on market; simple, controlled, interaction, and two-way FE specifications |
-| `table3_price_models.png` | Rate lock-in effect on log sale price; rate gap x segment interactions on N = 198,407 transactions |
+| `table3_price_models.png` | Rate lock-in effect on log sale price; rate gap x segment interactions on N = 271,047 transactions |
 | `table4_did_models.png` | DiD estimates for price and volume; triple-interaction specifications with county and year fixed effects |
 | `table5_hypothesis_test.png` | Welch two-sample t-test results: pre vs. post price means by segment and geography |
-| `table6_correlation.png` | Pearson correlation matrix for key continuous variables (N = 198,407) |
+| `table6_correlation.png` | Pearson correlation matrix for key continuous variables (N = 271,047) |
 | `table6b_standard_error.png` | Standard error of log sale price by price segment with 95% confidence intervals |
-| `table_continuous_model.png` | Continuous quadratic model: log(sale_price) ~ rate_gap x (log_av + log_av²) |
 | `table_rate_sensitivity.png` | Rate sensitivity summary: −1.8%/pp entry, −7.1%/pp mid-luxury, 3.9x squeeze multiplier |
 
 ### Interactive Maps

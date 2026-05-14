@@ -10,12 +10,9 @@ The following filters are applied to isolate arm's-length residential sales meet
 
 - Residential-only parcels: `C10` use-code flag present
 - Arm's-length qualification: `B1_Valuable_Consider = Y`, excluding sheriff sales, short sales, and quitclaim deeds
-- Assessor quality gate: `P2_16_Valid_Trending = Y`
 - Sale price at or above $50,000
-- Total assessed value above $10,000
-- Sales ratio winsorized at the 99th percentile
 
-SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appears in multiple annual SALEPARCEL files, the record from the most recent year is retained to reflect current assessor data. The five-county study area (Marion, Hamilton, Boone, Hendricks, Johnson) is enforced by FIPS code filter. After all filters, the dataset contains 198,407 arm's-length residential transactions. This file is distributed in `data/processed/sdf_indiana.csv` as the pre-processed substitute; the original SDF flat files are not redistributed.
+SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appears in multiple annual SALEPARCEL files, the record from the most recent year is retained to reflect current assessor data. The five-county study area (Marion, Hamilton, Boone, Hendricks, Johnson) is enforced by FIPS code filter. After all filters, the dataset contains 271,047 arm's-length residential transactions. This file is distributed in `data/processed/sdf_indiana.csv` as the pre-processed substitute; the original SDF flat files are not redistributed.
 
 ## Redfin County Market Tracker
 
@@ -64,5 +61,3 @@ The following variables are computed during pipeline construction and are not pr
 `affordability_ratio` is the estimated monthly mortgage payment as a share of median household income. The monthly payment assumes an 80% LTV ratio and the prevailing 30-year fixed rate for the observation month.
 
 `price_segment` is assigned by k-means clustering (k = 4 on log(sale_price)) with the top two clusters collapsed to luxury. The entry/mid-luxury breakpoint falls at approximately $388,000 and the mid-luxury/luxury breakpoint at approximately $1,040,000.
-
-`log_av` is the natural log of total assessor-reported assessed value, used in the continuous quadratic robustness model.

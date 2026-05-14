@@ -1,6 +1,6 @@
 # Methodology
 
-This document describes the identification strategy, data construction, model specifications, and statistical tests used to examine mortgage rate lock-in effects on the Indianapolis mid-luxury housing market from 2021 through 2025. The analysis combines a county-month panel (N = 300) for time-series models with individual deed records (N = 198,407) for price and volume models, relying on a Difference-in-Differences (DiD) design that treats the 2022 Federal Reserve tightening cycle as a quasi-natural experiment.
+This document describes the identification strategy, data construction, model specifications, and statistical tests used to examine mortgage rate lock-in effects on the Indianapolis mid-luxury housing market from 2021 through 2025. The analysis combines a county-month panel (N = 300) for time-series models with individual deed records (N = 271,047) for price and volume models, relying on a Difference-in-Differences (DiD) design that treats the 2022 Federal Reserve tightening cycle as a quasi-natural experiment.
 
 ## Identification Strategy
 
@@ -22,11 +22,9 @@ The county-month panel aggregates five counties over 60 months (January 2021 thr
 
 **Days-on-market models** (Table 2) use the county-month panel (N = 300) with log-transformed median DOM as the outcome. A baseline specification regresses DOM on `rate_gap` alone (R²adj = 0.296). A controlled specification adds `months_of_supply`, county-level `median_hhi`, and `population`. An interaction specification adds `rate_gap × mid_luxury_share` to detect differential rate sensitivity by segment composition. A two-way fixed-effects specification adds county and year fixed effects to the controlled model. All panel models use OLS with HC1 heteroskedasticity-robust standard errors.
 
-**Price models** (Table 3) use individual deed records (N = 198,407) with log(sale_price) as the outcome. A baseline specification regresses log price on `rate_gap`, suburb indicator, and `affordability_ratio`. The primary interaction specification adds `rate_gap × mid_luxury` and `rate_gap × luxury` indicators to allow rate sensitivity to vary by tier. A two-way fixed-effects variant adds county and year fixed effects. All price models use OLS with HC1 robust standard errors via the `sandwich` and `lmtest` packages in R.
+**Price models** (Table 3) use individual deed records (N = 271,047) with log(sale_price) as the outcome. A baseline specification regresses log price on `rate_gap`, suburb indicator, and `affordability_ratio`. The primary interaction specification adds `rate_gap × mid_luxury` and `rate_gap × luxury` indicators to allow rate sensitivity to vary by tier. A two-way fixed-effects variant adds county and year fixed effects. All price models use OLS with HC1 robust standard errors via the `sandwich` and `lmtest` packages in R.
 
 **DiD models** (Table 4) estimate the treatment effect on both price and transaction volume. The price DiD (triple interaction) specification regresses log(sale_price) on suburb, post, mid-luxury and luxury tier indicators, all pairwise interactions, the triple interaction Suburb × Post × Mid-luxury, and controls for median HHI, population, and affordability ratio. The volume DiD uses county-month-segment transaction counts (N = 837) as the outcome. Fixed-effects variants replace the geography and year main effects with county and year fixed effects. The triple interaction coefficient is the primary causal estimand: a negative sign on Suburb × Post × Mid-luxury indicates that suburban mid-luxury properties bear a disproportionate price or volume penalty relative to Marion County after the rate shock.
-
-**Continuous quadratic model** (table_continuous_model) is a robustness specification that replaces the discrete tier indicators with continuous log assessed value and its square, interacted with `rate_gap`. This specification allows rate sensitivity to vary non-linearly across the full price distribution without imposing segment boundaries. The `rate_gap × suburb` term is statistically significant (0.011***, SE = 0.001), corroborating the tier-based finding.
 
 ## Hypothesis Tests
 
@@ -34,7 +32,7 @@ Welch two-sample t-tests (Table 5) compare mean log(sale_price) between the pre-
 
 ## Correlation Analysis
 
-Pearson correlations are computed on the full deed record population (N = 198,407) among log(sale_price), rate_gap, mortgage rate, median HHI, affordability ratio, estimated monthly payment, and population (Table 6). A separate ZIP-code-level correlation between median HHI and median sale price is computed on approximately 80 ZIP codes (Figure 12), where aggregation to ZIP codes eliminates idiosyncratic transaction-level noise (fixer-uppers, estate sales, income-stretching) and reveals the income-price relationship more clearly (r = 0.805 at ZIP level versus r = 0.56 at transaction level).
+Pearson correlations are computed on the full deed record population (N = 271,047) among log(sale_price), rate_gap, mortgage rate, median HHI, affordability ratio, estimated monthly payment, and population (Table 6). A separate ZIP-code-level correlation between median HHI and median sale price is computed on approximately 80 ZIP codes (Figure 12), where aggregation to ZIP codes eliminates idiosyncratic transaction-level noise (fixer-uppers, estate sales, income-stretching) and reveals the income-price relationship more clearly (r = 0.805 at ZIP level versus r = 0.56 at transaction level).
 
 ## Software and Reproducibility
 
