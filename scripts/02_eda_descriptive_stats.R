@@ -7,12 +7,12 @@
 #   fig2_dom_histogram.png       — DOM distribution pre/post shock
 #   fig3_dom_over_time.png       — DOM trends Marion vs suburbs
 #   fig4_sale_to_list.png        — Avg sale-to-list ratio by segment
-#   fig4b_seller_stress.png      — Sold above list vs price drops over time
-#   fig5_transaction_volume.png  — SDF transaction volume collapse
-#   fig6_affordability.png       — Affordability ratio by county
-#   fig7_parallel_trends.png     — DiD assumption validation
-#   fig8_price_index.png         — Price index by segment 2021–2025
-#   fig12_hhi_price_correlation  — HHI vs median sale price by ZIP (DV vs key IV)
+#   fig5_seller_stress.png       — Sold above list vs price drops over time
+#   fig6_transaction_volume.png  — SDF transaction volume collapse
+#   fig7_affordability.png       — Affordability ratio by county
+#   fig8_parallel_trends.png     — DiD assumption validation
+#   fig9_price_index.png         — Price index by segment 2021–2025
+#   fig10_hhi_price_correlation  — HHI vs median sale price by ZIP (DV vs key IV)
 #   table1_descriptive           — Descriptive statistics table
 #
 # Key data limitations:
@@ -35,8 +35,18 @@ luxury_CAP <- 15e6   # $15M — removes data entry errors from luxury tier
 # ── Load data ─────────────────────────────────────────────────────────────────
 panel_data <- readRDS(here::here("data/processed/panel_data.rds"))
 
-sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"),
-                    show_col_types = FALSE) %>%
+# Read full SDF first to compute the count of luxury data-entry outliers
+# dropped by the luxury_CAP filter, then apply the cap to produce sdf_raw.
+sdf_full <- read_csv(here::here("data/processed/sdf_indiana.csv"),
+                     show_col_types = FALSE)
+n_lux_total   <- sum(sdf_full$price_segment == "luxury", na.rm = TRUE)
+n_lux_dropped <- sum(sdf_full$price_segment == "luxury" &
+                       sdf_full$sale_price > luxury_CAP, na.rm = TRUE)
+lux_dropped_pct <- if (n_lux_total > 0) {
+  round(n_lux_dropped / n_lux_total * 100, 1)
+} else 0
+
+sdf_raw <- sdf_full %>%
   filter(!(price_segment == "luxury" & sale_price > luxury_CAP))
 
 # ── Lookup tables derived from panel_data (mirrors 03_regression setup) ───────
@@ -81,6 +91,28 @@ cat("Unit of analysis 1: County-month cell —", nrow(panel_data), "obs\n")
 cat("Unit of analysis 2: Individual deed record —", nrow(sdf), "transactions\n\n")
 
 n_total <- nrow(sdf)
+
+# ── Derived labels for figures and captions ──────────────────────────────────
+# Tier breakpoints are derived from the price_segment factor produced by
+# 00_data_pipeline.py (k-means). Re-deriving here keeps figure labels in sync
+# with the underlying data on each re-run.
+entry_max_p     <- max(sdf$sale_price[sdf$price_segment == "entry"],      na.rm = TRUE)
+midlux_max_p    <- max(sdf$sale_price[sdf$price_segment == "mid_luxury"], na.rm = TRUE)
+entry_break_k   <- round(entry_max_p  / 1000)
+midlux_break_m  <- round(midlux_max_p / 1e6, 1)
+midlux_break_lbl <- if (isTRUE(all.equal(midlux_break_m, round(midlux_break_m))))
+  paste0(as.integer(round(midlux_break_m)), "M") else paste0(midlux_break_m, "M")
+entry_label  <- paste0("Entry (<$",      entry_break_k, "K)")
+midlux_label <- paste0("Mid-luxury ($",  entry_break_k, "K–$", midlux_break_lbl, ")")
+luxury_label <- paste0("Luxury (>$",     midlux_break_lbl, ")")
+
+# Marion County median household income — referenced in captions
+marion_hhi_val <- panel_data %>%
+  filter(county == "Marion") %>%
+  pull(median_hhi) %>%
+  first()
+marion_hhi_lbl <- paste0("$", formatC(round(marion_hhi_val / 1000), format = "f",
+                                      digits = 0, big.mark = ","), "K")
 
 # ── Shared color palette ──────────────────────────────────────────────────────
 col_metro    <- "#4472C4"   # blue   — Marion County
@@ -237,7 +269,7 @@ panel_data %>%
            label = "Asking price", hjust = 0, size = 3.2, color = "grey40") +
   scale_fill_manual(
     values = c("entry" = col_entry, "mid_luxury" = col_midlux),
-    labels = c("Entry (<$388K)", "Mid-luxury ($388K–$1M)")
+    labels = c(entry_label, midlux_label)
   ) +
   scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
   facet_wrap(~ geography,
@@ -249,7 +281,12 @@ panel_data %>%
     title    = "Avg Sale-to-List Ratio by Price Segment and Geography, 2021–2025",
     subtitle = "Compression below 1.0 = sellers accepting below asking price",
     x = "Year", y = "Avg sale-to-list ratio", fill = "Price segment",
-    caption  = "Source: Redfin county market tracker.\nluxury tier excluded: county medians rarely exceed $1M in this market.\nMarion County absence of mid-luxury reflects income constraint (median HHI $63K), not a rate shock response."
+    caption  = paste0(
+      "Source: Redfin county market tracker.\n",
+      "Luxury tier excluded: county medians rarely exceed $", midlux_break_lbl,
+      " in this market.\nMarion County absence of mid-luxury reflects income ",
+      "constraint (median HHI ", marion_hhi_lbl, "), not a rate shock response."
+    )
   ) +
   theme_squeeze
 
@@ -258,7 +295,7 @@ ggsave(here::here("outputs/figures/fig4_sale_to_list.pdf"), width = 10, height =
 cat("Saved fig4_sale_to_list.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 4b — Seller market stress: sold above list vs price drops
+# FIGURE 5 — Seller market stress: sold above list vs price drops
 # Complements fig4 by showing the distribution of outcomes over time
 # sold_above_list: share of homes selling above asking (demand pressure)
 # price_drops:     share of listings needing price cuts (seller capitulation)
@@ -305,12 +342,12 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave(here::here("outputs/figures/fig4b_seller_stress.png"), width = 11, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig4b_seller_stress.pdf"), width = 11, height = 5)
-cat("Saved fig4b_seller_stress.png/.pdf\n")
+ggsave(here::here("outputs/figures/fig5_seller_stress.png"), width = 11, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig5_seller_stress.pdf"), width = 11, height = 5)
+cat("Saved fig5_seller_stress.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 5 — Transaction volume by price segment
+# FIGURE 6 — Transaction volume by price segment
 # Suburban mid-luxury collapse is the rate lock-in market freeze made visible
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -327,17 +364,14 @@ panel_data %>%
   mutate(
     segment = factor(segment,
                      levels = c("entry", "mid_luxury", "luxury"),
-                     labels = c("Entry (<$388K)",
-                                "Mid-luxury ($388K–$1M)",
-                                "luxury (>$1M)")),
+                     labels = c(entry_label, midlux_label, luxury_label)),
     yr_label = factor(year)
   ) %>%
   ggplot(aes(x = yr_label, y = transactions, fill = segment, group = segment)) +
   geom_col(position = "dodge", alpha = 0.85) +
-  scale_fill_manual(values = c(
-    "Entry (<$388K)"         = col_entry,
-    "Mid-luxury ($388K–$1M)" = col_midlux,
-    "luxury (>$1M)"           = col_luxury
+  scale_fill_manual(values = setNames(
+    c(col_entry, col_midlux, col_luxury),
+    c(entry_label, midlux_label, luxury_label)
   )) +
   scale_y_continuous(labels = comma) +
   facet_wrap(~ geography,
@@ -349,16 +383,23 @@ panel_data %>%
     title    = "Annual Transaction Volume by Price Segment, 2021–2025",
     subtitle = "Suburban mid-luxury volume collapse is the rate lock-in market freeze made visible",
     x = "Year", y = "Total transactions", fill = "Price segment",
-    caption  = "Source: Indiana Sales Disclosure Form deed records, STATS Indiana.\nArm's-length residential sales only. luxury tier capped at $15M\n(32 data entry errors removed, 0.6% of luxury transactions)."
+    caption  = paste0(
+      "Source: Indiana Sales Disclosure Form deed records, STATS Indiana.\n",
+      "Arm's-length residential sales only. Luxury tier capped at ",
+      scales::dollar(luxury_CAP), "\n(",
+      formatC(n_lux_dropped, format = "f", digits = 0, big.mark = ","),
+      " data entry errors removed, ", lux_dropped_pct,
+      "% of luxury transactions)."
+    )
   ) +
   theme_squeeze
 
-ggsave(here::here("outputs/figures/fig5_transaction_volume.png"), width = 10, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig5_transaction_volume.pdf"), width = 10, height = 5)
-cat("Saved fig5_transaction_volume.png/.pdf\n")
+ggsave(here::here("outputs/figures/fig6_transaction_volume.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig6_transaction_volume.pdf"), width = 10, height = 5)
+cat("Saved fig6_transaction_volume.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 6 — Affordability ratio by county over time
+# FIGURE 7 — Affordability ratio by county over time
 # Two mechanisms, same outcome: Marion via income constraint, suburbs via rate shock
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -395,12 +436,12 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave(here::here("outputs/figures/fig6_affordability.png"), width = 10, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig6_affordability.pdf"), width = 10, height = 5)
-cat("Saved fig6_affordability.png/.pdf\n")
+ggsave(here::here("outputs/figures/fig7_affordability.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig7_affordability.pdf"), width = 10, height = 5)
+cat("Saved fig7_affordability.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 7 — Parallel trends check using log sale price (main DV)
+# FIGURE 8 — Parallel trends check using log sale price (main DV)
 # Uses SDF transaction data aggregated to county-month
 # Required for DiD validity: treatment and control must track together pre-shock
 # ══════════════════════════════════════════════════════════════════════════════
@@ -452,12 +493,12 @@ sdf %>%
   ) +
   theme_squeeze
 
-ggsave(here::here("outputs/figures/fig7_parallel_trends.png"), width = 9, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig7_parallel_trends.pdf"), width = 9, height = 5)
-cat("Saved fig7_parallel_trends.png/.pdf\n")
+ggsave(here::here("outputs/figures/fig8_parallel_trends.png"), width = 9, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig8_parallel_trends.pdf"), width = 9, height = 5)
+cat("Saved fig8_parallel_trends.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 8 — Price index by segment: 2021 = 100
+# FIGURE 9 — Price index by segment: 2021 = 100
 # ══════════════════════════════════════════════════════════════════════════════
 
 sdf %>%
@@ -469,9 +510,7 @@ sdf %>%
     geography     = if_else(county == "Marion", "metro", "suburb"),
     price_segment = factor(price_segment,
                            levels = c("entry", "mid_luxury", "luxury"),
-                           labels = c("Entry (<$388K)",
-                                      "Mid-luxury ($388K–$1M)",
-                                      "luxury (>$1M)"))
+                           labels = c(entry_label, midlux_label, luxury_label))
   ) %>%
   group_by(year, price_segment, geography) %>%
   summarise(median_price = weighted.mean(median_price, n, na.rm = TRUE),
@@ -489,10 +528,9 @@ sdf %>%
   geom_point(size = 2.5) +
   annotate("text", x = 1.1, y = 101.5,
            label = "2021 baseline", hjust = 0, size = 3.0, color = "grey40") +
-  scale_color_manual(values = c(
-    "Entry (<$388K)"         = col_entry,
-    "Mid-luxury ($388K–$1M)" = col_midlux,
-    "luxury (>$1M)"           = col_luxury
+  scale_color_manual(values = setNames(
+    c(col_entry, col_midlux, col_luxury),
+    c(entry_label, midlux_label, luxury_label)
   )) +
   scale_y_continuous(breaks = seq(80, 140, by = 10)) +
   facet_wrap(~ geography,
@@ -507,15 +545,16 @@ sdf %>%
     caption = paste0(
       "Source: Indiana Sales Disclosure Form deed records, STATS Indiana.\n",
       "N = ", format(n_total, big.mark = ","), " residential transactions.\n ",
-      "luxury tier capped at $15M. luxury decline reflects thin market volatility, ",
+      "Luxury tier capped at ", scales::dollar(luxury_CAP),
+      ". Luxury decline reflects thin market volatility, ",
       "not rate sensitivity."
     )
   ) +
   theme_squeeze
 
-ggsave(here::here("outputs/figures/fig8_price_index.png"), width = 10, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig8_price_index.pdf"), width = 10, height = 5)
-cat("Saved fig8_price_index.png/.pdf\n")
+ggsave(here::here("outputs/figures/fig9_price_index.png"), width = 10, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig9_price_index.pdf"), width = 10, height = 5)
+cat("Saved fig9_price_index.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABLE 1 — Descriptive statistics by geography
@@ -526,9 +565,9 @@ table_data <- panel_data %>%
     Geography = if_else(geography == "metro",
                         "Marion County (metro)", "Suburbs"),
     `Price Segment` = case_when(
-      price_segment == "entry"      ~ "Entry (<$388K)",
-      price_segment == "mid_luxury" ~ "Mid-luxury ($388K–$1M)",
-      TRUE                          ~ "luxury (>$1M)"
+      price_segment == "entry"      ~ entry_label,
+      price_segment == "mid_luxury" ~ midlux_label,
+      TRUE                          ~ luxury_label
     ),
     `Rate Era` = case_when(
       year == 2021            ~ "Baseline (2021)",
@@ -602,7 +641,7 @@ file.remove(tbl1_html)
 cat("Saved outputs/tables/table1_descriptive.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 12 — HHI vs median sale price correlation by ZIP code
+# FIGURE 10 — HHI vs median sale price correlation by ZIP code
 # Marion clusters bottom-left (income constrained)
 # Hamilton clusters top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -690,14 +729,14 @@ zip_data %>%
     panel.grid.minor = element_blank()
   )
 
-ggsave(here::here("outputs/figures/fig12_hhi_price_correlation.png"),
+ggsave(here::here("outputs/figures/fig10_hhi_price_correlation.png"),
        width = 9, height = 6, dpi = 300)
-ggsave(here::here("outputs/figures/fig12_hhi_price_correlation.pdf"),
+ggsave(here::here("outputs/figures/fig10_hhi_price_correlation.pdf"),
        width = 9, height = 6)
-cat("Saved fig12_hhi_price_correlation.png/.pdf\n")
+cat("Saved fig10_hhi_price_correlation.png/.pdf\n")
 
 # Save correlation stats for regression/hypothesis test reference
 saveRDS(list(r = round(overall_cor, 3),
              r2 = round(overall_cor^2, 3),
              n_zip = nrow(zip_data)),
-        here::here("data/processed/fig12_correlation_stats.rds"))
+        here::here("data/processed/fig10_correlation_stats.rds"))

@@ -3,9 +3,9 @@
 # Indiana Mid-Luxury Housing Squeeze
 #
 # Analyses:
-#   Histogram:        log sale price distribution (fig_histogram_price.png)
+#   Histogram:        log sale price distribution (fig11_histogram_price.png)
 #   Hypothesis test:  Welch t-test, pre vs post rate shock
-#   Scatterplot:      HHI vs sale price by ZIP (fig12 produced in 02_eda)
+#   Scatterplot:      HHI vs sale price by ZIP (fig10 produced in 02_eda)
 #   Simple OLS:       m_simple — log(price) ~ rate_gap
 #   Multiple OLS:     m_price_interact, m_did_price_triple (interactions)
 #   Tables:           modelsummary with HC1 robust SEs; HTML chosen for vcov support
@@ -15,14 +15,17 @@
 #   specification: base, controls, interact, county_fe, twoway_fe, simple, fe, triple
 #
 # Unit of analysis:
-#   Redfin panel:     County-month cell (N=300: 5 counties × 60 months)
-#   SDF transactions: Individual deed record (N=270,753: 2021–2025)
+#   Redfin panel:     County-month cell (5 counties × 60 months;
+#                     nrow(panel_data) printed at runtime via cat())
+#   SDF transactions: Individual deed record (study window 2021–2025;
+#                     nrow(sdf) printed at runtime via cat())
 #
 # Key methodological notes:
 #   1. Geography proxies for buyer type — not direct identification
 #      Future research: HMDA data for direct move-up buyer identification
-#   2. Marion income constraint ($63K HHI) means DiD is a conservative
-#      lower bound on the true suburban treatment effect
+#   2. Marion income constraint (median HHI carried in `marion_hhi`)
+#      means DiD is a conservative lower bound on the true suburban
+#      treatment effect
 #   3. DOM subject to delist-relist gaming — lower bound caveat
 #   4. luxury tier driven by thin market volatility, not rate sensitivity
 #   5. OVB candidates: Hamilton County new construction (Eli Lilly/Amazon),
@@ -57,8 +60,9 @@ panel_data <- panel_data %>%
   )
 
 # ── Robust SE helper ──────────────────────────────────────────────────────────
-# HC1 corrects for heteroskedasticity — appropriate here because $150K Marion
-# transactions and $600K Hamilton transactions have different error variance.
+# HC1 corrects for heteroskedasticity — appropriate here because low-priced
+# Marion transactions and higher-priced suburban transactions exhibit
+# substantially different error variance.
 # Standard OLS SEs would be artificially small without this correction.
 robust_se <- function(model) {
   coeftest(model, vcov = vcovHC(model, type = "HC1"))
@@ -102,6 +106,39 @@ sdf <- sdf_raw %>%
 
 n_sdf   <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 n_label <- n_sdf
+n_panel <- formatC(nrow(panel_data), format = "f", digits = 0, big.mark = ",")
+year_range_label <- paste(
+  min(as.integer(as.character(sdf$year))),
+  max(as.integer(as.character(sdf$year))),
+  sep = "–"
+)
+
+# ── Derived labels for figures and captions ──────────────────────────────────
+# Tier breakpoints are derived from the price_segment factor (k-means output).
+entry_max_p      <- max(sdf$sale_price[sdf$price_segment == "entry"],      na.rm = TRUE)
+midlux_max_p     <- max(sdf$sale_price[sdf$price_segment == "mid_luxury"], na.rm = TRUE)
+entry_break_k    <- round(entry_max_p  / 1000)
+midlux_break_m   <- round(midlux_max_p / 1e6, 1)
+midlux_break_lbl <- if (isTRUE(all.equal(midlux_break_m, round(midlux_break_m))))
+  paste0(as.integer(round(midlux_break_m)), "M") else paste0(midlux_break_m, "M")
+entry_label  <- paste0("Entry (<$",      entry_break_k, "K)")
+midlux_label <- paste0("Mid-luxury ($",  entry_break_k, "K–$", midlux_break_lbl, ")")
+luxury_label <- paste0("Luxury (>$",     midlux_break_lbl, ")")
+
+# Current rate gap and corresponding mortgage rate — derived from latest panel month
+latest_row    <- panel_data %>%
+  arrange(as.integer(as.character(year)), month) %>%
+  slice_tail(n = 1)
+current_gap   <- round(latest_row$rate_gap[1], 1)
+current_rate  <- round(latest_row$mortgage_rate[1], 1)
+
+# Marion HHI carried forward from panel_data for any narrative references
+marion_hhi <- panel_data %>%
+  filter(county == "Marion") %>%
+  pull(median_hhi) %>%
+  first()
+marion_hhi_short <- paste0("$", formatC(round(marion_hhi / 1000), format = "f",
+                                        digits = 0, big.mark = ","), "K")
 
 cat("Unit of analysis 1: County-month cell —", nrow(panel_data), "obs\n")
 cat("Unit of analysis 2: Individual deed record —", nrow(sdf), "transactions\n\n")
@@ -129,13 +166,17 @@ sdf %>%
            hjust = 0, size = 3.5, color = "red") +
   scale_x_continuous(
     limits = c(log(MIN_PRICE), log(1500000)),
-    breaks = log(c(75000, 150000, 250000, 388000, 600000, 1000000)),
-    labels = c("$75K", "$150K", "$250K", "$388K", "$600K", "$1M")
+    breaks = log(c(75000, 150000, 250000, entry_break_k * 1000,
+                   600000, midlux_max_p)),
+    labels = c("$75K", "$150K", "$250K",
+               paste0("$", entry_break_k, "K"),
+               "$600K",
+               paste0("$", midlux_break_lbl))
   ) +
   labs(
     title    = "Distribution of Single Family Residential Sale Prices",
-    subtitle = paste0("Log scale | Indianapolis metro 2021–2025 | N = ",
-                      n_label, " transactions"),
+    subtitle = paste0("Log scale | Indianapolis metro ", year_range_label,
+                      " | N = ", n_label, " transactions"),
     x       = "Sale price (log scale)",
     y       = "Count of transactions",
     caption = paste0(
@@ -156,21 +197,21 @@ sdf %>%
     panel.grid.minor      = element_blank()
   )
 
-ggsave(here::here("outputs/figures/fig_histogram_price.png"), width = 9, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig_histogram_price.pdf"), width = 9, height = 5)
-cat("Saved fig_histogram_price.png/.pdf — median:", median_label, "\n")
+ggsave(here::here("outputs/figures/fig11_histogram_price.png"), width = 9, height = 5, dpi = 300)
+ggsave(here::here("outputs/figures/fig11_histogram_price.pdf"), width = 9, height = 5)
+cat("Saved fig11_histogram_price.png/.pdf — median:", median_label, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SCATTERPLOT NOTE — HHI vs median sale price
-# fig12_hhi_price_correlation.png produced in 02_eda_descriptive_statistics.R
+# fig10_hhi_price_correlation.png produced in 02_eda_descriptive_stats.R
 # Shows median sale price (DV) vs median household income (key IV/control)
 # Illustrates two-mechanism hypothesis: Marion clusters bottom-left (income-constrained), Hamilton top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-fig12_stats <- readRDS(here::here("data/processed/fig12_correlation_stats.rds"))
-cat("ZIP-level HHI-price correlation: r =", fig12_stats$r,
-    "| R² =", fig12_stats$r2,
-    "| N =", fig12_stats$n_zip, "zip codes\n\n")
+fig10_stats <- readRDS(here::here("data/processed/fig10_correlation_stats.rds"))
+cat("ZIP-level HHI-price correlation: r =", fig10_stats$r,
+    "| R² =", fig10_stats$r2,
+    "| N =", fig10_stats$n_zip, "zip codes\n\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HYPOTHESIS TEST — Pre vs post rate shock
@@ -222,8 +263,8 @@ overall_row <- tibble(
 seg_results <- sdf %>%
   filter(price_segment != "luxury") %>%
   mutate(Group = case_when(
-    price_segment == "entry"      ~ "Entry (<$388K)",
-    price_segment == "mid_luxury" ~ "Mid-luxury ($388K\u2013$1M)"
+    price_segment == "entry"      ~ entry_label,
+    price_segment == "mid_luxury" ~ midlux_label
   )) %>%
   group_by(Group) %>%
   summarise(
@@ -297,16 +338,16 @@ datasummary_df(
     "Means transformed back to dollars \u00b7 N = ", n_label,
     " \u00b7 *** p<0.001 ** p<0.01 * p<0.05"
   ),
-  output = here::here("outputs/tables/table5_hypothesis_test.html")
+  output = here::here("outputs/tables/table2_hypothesis_test.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table5_hypothesis_test.html")),
-  file  = here::here("outputs/tables/table5_hypothesis_test.png"),
+  url   = paste0("file://", here::here("outputs/tables/table2_hypothesis_test.html")),
+  file  = here::here("outputs/tables/table2_hypothesis_test.png"),
   delay = 2, zoom = 1.5, vwidth = 1200
 )
-file.remove(here::here("outputs/tables/table5_hypothesis_test.html"))
-cat("Saved table5_hypothesis_test.png\n")
+file.remove(here::here("outputs/tables/table2_hypothesis_test.html"))
+cat("Saved table2_hypothesis_test.png\n")
 
 # ══ STANDARD ERROR + CORRELATION ═════════════════════════════════════════════
 
@@ -336,32 +377,43 @@ cor_data <- sdf %>%
 cat("Correlation matrix N =", nrow(cor_data), "\n\n")
 print(round(cor(cor_data, method = "pearson"), 3))
 
+# Dynamic correlations referenced in Table 6 notes ----------------------------
+cor_txn_hhi_logprice <- cor(cor_data[["Median HHI"]],
+                            cor_data[["Log sale price"]],
+                            method = "pearson")
+cor_txn_label <- format(round(cor_txn_hhi_logprice, 3), nsmall = 3)
+cor_zip_label <- format(round(fig10_stats$r,         3), nsmall = 3)
+n_cor_label   <- formatC(nrow(cor_data), format = "f", digits = 0, big.mark = ",")
+cat("Transaction-level r(HHI, log price) =", cor_txn_label,
+    "| ZIP-level r (fig10) =", cor_zip_label, "\n")
+
 datasummary_correlation(
   cor_data,
   title  = "Table 6: Pearson Correlation Matrix — Key Continuous Variables",
   notes = paste0(
-    "N = ", n_sdf, " individual transactions. Pearson r. ",
-    "Note: transaction-level r = 0.43 for HHI vs log sale price is lower than ",
-    "ZIP-level r = 0.789 (fig12) because individual transactions include ",
+    "N = ", n_cor_label, " individual transactions. Pearson r. ",
+    "Note: transaction-level r = ", cor_txn_label,
+    " for HHI vs log sale price is lower than ",
+    "ZIP-level r = ", cor_zip_label, " (fig10) because individual transactions include ",
     "substantial idiosyncratic variance (fixer-uppers, estate sales, income-stretching). ",
     "Aggregation to ZIP code smooths this noise, revealing the income-price relationship. ",
     "Both values are correct at their respective units of analysis."
   ),
-  output = here::here("outputs/tables/table6_correlation.html")
+  output = here::here("outputs/tables/table3_correlation.html")
 )
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table6_correlation.html")),
-  file  = here::here("outputs/tables/table6_correlation.png"),
+  url   = paste0("file://", here::here("outputs/tables/table3_correlation.html")),
+  file  = here::here("outputs/tables/table3_correlation.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-file.remove(here::here("outputs/tables/table6_correlation.html"))
-cat("Saved outputs/tables/table6_correlation.png\n")
+file.remove(here::here("outputs/tables/table3_correlation.html"))
+cat("Saved outputs/tables/table3_correlation.png\n")
 
 se_table <- sdf %>%
   mutate(Segment = case_when(
-    price_segment == "entry"      ~ "Entry (<$388K)",
-    price_segment == "mid_luxury" ~ "Mid-luxury ($388K\u2013$1M)",
-    price_segment == "luxury"      ~ "luxury (>$1M)"
+    price_segment == "entry"      ~ entry_label,
+    price_segment == "mid_luxury" ~ midlux_label,
+    price_segment == "luxury"     ~ luxury_label
   )) %>%
   group_by(Segment) %>%
   summarise(
@@ -381,16 +433,16 @@ datasummary_df(
   title  = "Table 6b: Standard Error of Log Sale Price by Price Segment",
   notes  = paste0("SE = SD / \u221aN \u00b7 95% CI = mean \u00b1 1.96 \u00d7 SE \u00b7 ",
                   "DV = log sale price \u00b7 N = ", n_label),
-  output = here::here("outputs/tables/table6b_standard_error.html"),
+  output = here::here("outputs/tables/table4_standard_error.html"),
   fmt    = 3
 )
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table6b_standard_error.html")),
-  file  = here::here("outputs/tables/table6b_standard_error.png"),
+  url   = paste0("file://", here::here("outputs/tables/table4_standard_error.html")),
+  file  = here::here("outputs/tables/table4_standard_error.png"),
   delay = 2, zoom = 1.5, vwidth = 1000
 )
-file.remove(here::here("outputs/tables/table6b_standard_error.html"))
-cat("Saved table6b_standard_error.png\n")
+file.remove(here::here("outputs/tables/table4_standard_error.html"))
+cat("Saved table4_standard_error.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SIMPLE AND MULTIPLE REGRESSION
@@ -405,7 +457,8 @@ cat("Adj R²:", round(summary(m_simple)$adj.r.squared, 3), "\n")
 print(robust_se(m_simple))
 
 # ── Redfin panel: DOM models ──────────────────────────────────────────────────
-# DV: median days on market | Source: Redfin county-month panel (N=300)
+# DV: median days on market | Source: Redfin county-month panel
+# (N matches nrow(panel_data); printed via cat() above as n_panel)
 m_dom_base      <- lm(median_dom ~ rate_gap, data = panel_data)
 m_dom_controls  <- lm(median_dom ~ rate_gap + price_segment + geography +
                         median_hhi + population + months_of_supply,
@@ -436,7 +489,8 @@ m_stl_fe        <- lm(avg_sale_to_list ~ rate_gap * price_segment + geography +
 # Treatment = suburbs (proxy for move-up buyers)
 # Control   = Marion County (proxy for necessity-driven buyers)
 # Limitation: geography is an imperfect proxy for buyer type
-# Marion income constraint ($63K HHI) makes DiD a conservative lower bound
+# Marion income constraint (median HHI carried in `marion_hhi`)
+# makes DiD a conservative lower bound
 m_did_dom_simple <- lm(median_dom ~ treated + post + did, data = panel_data)
 m_did_dom_fe     <- lm(median_dom ~ did + factor(county) + factor(year),
                        data = panel_data)
@@ -450,13 +504,14 @@ m_did_stl_triple <- lm(avg_sale_to_list ~ treated * post * price_segment +
                        data = panel_data)
 
 # ── SDF transaction-level: log sale price ────────────────────────────────────
-# DV: log sale price | Source: SDF deed records (N=270,753)
+# DV: log sale price | Source: SDF deed records
+# (N matches nrow(sdf); printed via cat() above as n_sdf)
 m_price_base    <- lm(log_sale_price ~ rate_gap + price_segment + geography +
                         median_hhi + affordability_ratio,
                       data = sdf)
 
 # Core squeeze test — rate_gap × price_segment interaction
-# Significant at p<0.001: mid-luxury falls 4.4%/pp more than entry
+# (mid-luxury vs entry slope differential printed at runtime below)
 m_price_interact <- lm(log_sale_price ~ rate_gap * price_segment + geography +
                          median_hhi + affordability_ratio,
                        data = sdf)
@@ -550,7 +605,7 @@ print(robust_se(m_did_volume_triple))
 coef_map <- c(
   "rate_gap"                             = "Rate gap (pp)",
   "price_segmentmid_luxury"              = "Mid-luxury tier",
-  "price_segmentluxury"                   = "luxury tier (>$1M)",
+  "price_segmentluxury"                   = paste0("Luxury tier (>$", midlux_break_lbl, ")"),
   "geographysuburb"                      = "Suburb",
   "median_hhi"                           = "Median HHI",
   "population"                           = "Population",
@@ -587,10 +642,10 @@ modelsummary(
   title     = "Table 2: Simple and Multiple Regression — Days on Market (Redfin Panel)",
   notes     = paste0(
     "Simple DV is log sale price. DOM models DV is median DOM, ",
-    "Redfin county-month panel (N=300). HC1 robust SEs. ",
+    "Redfin county-month panel (N=", n_panel, "). HC1 robust SEs. ",
     "DOM subject to delist-relist gaming — lower bound interpretation."
   ),
-  output    = here::here("outputs/tables/table2_dom_models.html")
+  output    = here::here("outputs/tables/table5_dom_models.html")
 )
 
 # ── TABLE 3: SDF price models — core squeeze evidence ────────────────────────
@@ -609,11 +664,12 @@ modelsummary(
   notes     = paste0(
     "Source: STATS Indiana SDF deed records. ",
     "DV: log sale price. N=", n_label, " transactions. HC1 robust SEs. ",
-    "luxury tier capped at $15M. County and year FE omitted from display. ",
+    "luxury tier capped at ", dollar(luxury_CAP),
+    ". County and year FE omitted from display. ",
     "OVB candidates: new construction (Hamilton County Eli Lilly/Amazon expansion), ",
     "school district premiums (Carmel/Fishers), corporate relocations."
   ),
-  output    = here::here("outputs/tables/table3_price_models.html")
+  output    = here::here("outputs/tables/table6_price_models.html")
 )
 
 # ── TABLE 4: DiD models ────────────────────────────────────────────────────────
@@ -634,14 +690,15 @@ modelsummary(
     "Treatment = suburban counties (proxy for move-up buyers). ",
     "Control = Marion County (proxy for necessity-driven buyers). ",
     "Geography is imperfect proxy for buyer type — HMDA data needed. ",
-    "Marion income constraint ($63K HHI) implies conservative lower bounds."
+    "Marion income constraint (median HHI ", marion_hhi_short,
+    ") implies conservative lower bounds."
   ),
-  output    = here::here("outputs/tables/table4_did_models.html")
+  output    = here::here("outputs/tables/table7_did_models.html")
 )
 
-cat("Saved: table2, table3, table4 HTML — rendering to PNG\n")
+cat("Saved: table5, table6, table7 HTML — rendering to PNG\n")
 
-for (tbl in c("table2_dom_models", "table3_price_models", "table4_did_models")) {
+for (tbl in c("table5_dom_models", "table6_price_models", "table7_did_models")) {
   tbl_html <- here::here("outputs/tables", paste0(tbl, ".html"))
   tbl_png  <- here::here("outputs/tables", paste0(tbl, ".png"))
   webshot2::webshot(
@@ -669,8 +726,13 @@ luxury_annual <- round(sum(sdf$price_segment == "luxury") /
                          (length(unique(sdf$county)) *
                             length(unique(as.character(sdf$year)))), 0)
 
+# Squeeze multiplier (mid-luxury slope / entry slope, exp-scale percent)
+# Computed once here for reuse in fig12 annotation and the rate-sensitivity table.
+squeeze_mult <- round(slope_midlux / slope_entry, 1)
+
 cat("Slopes — Entry:", slope_entry, "%/pp | Mid-luxury:", slope_midlux,
     "%/pp | luxury:", slope_luxury, "%/pp\n")
+cat("Squeeze multiplier (mid/entry):", squeeze_mult, "x\n")
 cat("luxury transactions/county/year:", luxury_annual, "\n")
 
 segment_medians <- sdf %>%
@@ -713,9 +775,12 @@ baseline_labels <- rate_grid %>%
     )
   )
 
-# Labels at x = 3.1 (current rate gap)
+# Labels at current rate gap (derived from latest panel observation)
 current_labels <- rate_grid %>%
-  filter(abs(rate_gap - 3.1) < 0.01) %>%
+  filter(abs(rate_gap - current_gap) < 0.05) %>%
+  group_by(price_segment) %>%
+  slice(1) %>%
+  ungroup() %>%
   mutate(label   = paste0("$", round(fit_dollars / 1000, 0), "K"),
          label_y = fit_dollars + y_range * 0.04)
 
@@ -754,25 +819,28 @@ ggplot(rate_grid, aes(x = rate_gap, y = fit_dollars,
             aes(x = rate_gap, y = label_y, label = label, color = price_segment),
             hjust = -0.1, vjust = 0.5, size = 3.2, fontface = "bold",
             show.legend = FALSE, inherit.aes = FALSE) +
-  geom_vline(xintercept = 0,   linetype = "dashed", color = "grey50") +
-  geom_vline(xintercept = 2,   linetype = "dotted", color = "grey50") +
-  geom_vline(xintercept = 3.1, linetype = "dashed", color = "grey30") +
+  geom_vline(xintercept = 0,            linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = 2,            linetype = "dotted", color = "grey50") +
+  geom_vline(xintercept = current_gap,  linetype = "dashed", color = "grey30") +
   annotate("text", x = 0.1,  y = 120000, label = "2021 baseline",
            hjust = 0, size = 3.0, color = "grey50") +
   annotate("text", x = 2.1,  y = 120000, label = "Post threshold",
            hjust = 0, size = 3.0, color = "grey50") +
-  annotate("text", x = 3.2,  y = 120000, label = "Current gap (3.1pp)",
+  annotate("text", x = current_gap + 0.1, y = 120000,
+           label = paste0("Current gap (", current_gap, "pp)"),
            hjust = 0, size = 3.0, color = "grey30") +
   
   # Segment labels annotating key rate-sensitivity findings
-  annotate("text", x = 1.5, y = 1000000, label = "Mid-Luxury:\nHighly vulnerable to rate hikes\n(3.9x Squeeze Multiplier)",
+  annotate("text", x = 1.5, y = 1000000,
+           label = paste0("Mid-Luxury:\nHighly vulnerable to rate hikes\n(",
+                          squeeze_mult, "x Squeeze Multiplier)"),
            color = "#ED7D31", fontface = "bold", hjust = 0, size = 3.5, lineheight = 0.9) +
   annotate("text", x = 1.5, y = 400000, label = "Entry-Level:\nResilient to rate shocks",
            color = "#70AD47", fontface = "bold", hjust = 0, size = 3.5, lineheight = 0.9) +
 
 scale_color_manual(
   values = c("entry" = "#70AD47", "mid_luxury" = "#ED7D31", "luxury" = "#4472C4"),
-  labels = c("Entry (<$388K)", "Mid-luxury ($388K\u2013$1M)", "luxury (>$1M)")
+  labels = c(entry_label, midlux_label, luxury_label)
 ) +
   scale_fill_manual(
     values = c("entry" = "#70AD47", "mid_luxury" = "#ED7D31", "luxury" = "#4472C4"),
@@ -787,17 +855,18 @@ scale_color_manual(
     title    = "The Rate Penalty: Mid-Luxury Market Bears the Brunt of Rate Hikes",
     subtitle = paste0("Entry-level buyers remain insulated, while mid-luxury properties face severe price degradation | N = ",
                       n_sdf, " transactions"),
-    x        = "Rate Lock-In Gap (PP Above 3% Baseline)",
+    x        = paste0("Rate Lock-In Gap (PP Above ", RATE_BASELINE, "% Baseline)"),
     y        = "Predicted Rate Penalty ($)",
     color   = "Price segment",
     caption = paste0(
       "Source: STATS Indiana SDF deed records.\n",
       "N = ", n_sdf, " transactions after regression filters ",
-      "(matched to FRED rate, sale price >$50K).\n",
+      "(matched to FRED rate, sale price >", dollar(MIN_PRICE), ").\n",
       "luxury slope (", slope_luxury, "%/pp) reflects thin market volatility, ",
       "not behavioral rate sensitivity\n",
       "(~", luxury_annual, " transactions/county/year). ",
-      "At 4.5pp gap = 7.5% mortgage rate (observed late 2023).\n",
+      "At 4.5pp gap = ", 4.5 + RATE_BASELINE,
+      "% mortgage rate (observed late 2023).\n",
       "Dashed line at 3.1pp = current rate gap at time of study."
     )
   ) +
@@ -812,38 +881,37 @@ scale_color_manual(
     plot.margin      = margin(5, 50, 5, 5, "pt")
   )
 
-ggsave(here::here("outputs/figures/fig9_marginal_effects_updated.png"), width = 10, height = 5.5, dpi = 300)
-ggsave(here::here("outputs/figures/fig9_marginal_effects_updated.pdf"), width = 10, height = 5.5)
-cat("Saved fig9_marginal_effects_updated.png\n")
+ggsave(here::here("outputs/figures/fig12_marginal_effects.png"), width = 10, height = 5.5, dpi = 300)
+ggsave(here::here("outputs/figures/fig12_marginal_effects.pdf"), width = 10, height = 5.5)
+cat("Saved fig12_marginal_effects.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RATE SENSITIVITY — derived directly from model coefficients
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Log-scale slopes used for the per-rate forecast scenarios in forecast_tbl
+# below. Exp-scale percent slopes (slope_entry / slope_midlux / slope_luxury)
+# and the squeeze multiplier (squeeze_mult) are already defined at the fig12
+# step and reused here without recomputation.
 entry_slope  <- coef_price["rate_gap"]
-midlux_slope <- coef_price["rate_gap"] + 
+midlux_slope <- coef_price["rate_gap"] +
   coef_price["rate_gap:price_segmentmid_luxury"]
-squeeze_mult <- round(midlux_slope / entry_slope, 1)
 
-cat("Entry slope:          ", round(entry_slope * 100, 1), "%/pp\n")
-cat("Mid-luxury slope:     ", round(midlux_slope * 100, 1), "%/pp\n")
+cat("Entry slope:          ", slope_entry,  "%/pp\n")
+cat("Mid-luxury slope:     ", slope_midlux, "%/pp\n")
 cat("Squeeze multiplier:   ", squeeze_mult, "x\n")
 
-# Use exp() - 1 throughout to match fig9 slope labels
-entry_slope_pct  <- round((exp(entry_slope)  - 1) * 100, 1)
-midlux_slope_pct <- round((exp(midlux_slope) - 1) * 100, 1)
-squeeze_mult     <- round(midlux_slope_pct / entry_slope_pct, 1)
-
 forecast_tbl <- tibble(
-  ` `                      = c("Entry (<$388K)",
-                               "Mid-luxury ($388K\u2013$1M)",
+  ` `                      = c(entry_label,
+                               midlux_label,
                                "Squeeze multiplier"),
-  `Rate sensitivity`       = c(paste0(entry_slope_pct,  "%/pp"),
-                               paste0(midlux_slope_pct, "%/pp"),
+  `Rate sensitivity`       = c(paste0(slope_entry,  "%/pp"),
+                               paste0(slope_midlux, "%/pp"),
                                paste0(squeeze_mult, "\u00d7")),
-  `At current gap (3.1pp)` = c(paste0(round((exp(entry_slope  * 3.1) - 1) * 100, 1), "%"),
-                               paste0(round((exp(midlux_slope * 3.1) - 1) * 100, 1), "%"),
-                               "\u2014"),
+  !!paste0("At current gap (", current_gap, "pp)") :=
+    c(paste0(round((exp(entry_slope  * current_gap) - 1) * 100, 1), "%"),
+      paste0(round((exp(midlux_slope * current_gap) - 1) * 100, 1), "%"),
+      "\u2014"),
   `If gap widens to 4pp`   = c(paste0(round((exp(entry_slope  * 4.0) - 1) * 100, 1), "%"),
                                paste0(round((exp(midlux_slope * 4.0) - 1) * 100, 1), "%"),
                                "\u2014")
@@ -855,19 +923,20 @@ datasummary_df(
   notes = paste0(
     "Slopes from m_price_interact HC1 robust SEs, N = ", n_sdf, " transactions. ",
     "Squeeze multiplier = mid-luxury slope / entry slope = constant across all rate environments. ",
-    "Current gap based on NAR Base scenario (6.1% mortgage rate vs 3% baseline). ",
+    "Current gap based on latest panel observation (", current_rate,
+    "% mortgage rate vs ", RATE_BASELINE, "% baseline). ",
     "Adj R\u00b2 = ", round(summary(m_price_interact)$adj.r.squared, 3), "."
   ),
-  output = here::here("outputs/tables/table_rate_sensitivity.html")
+  output = here::here("outputs/tables/table8_rate_sensitivity.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table_rate_sensitivity.html")),
-  file  = here::here("outputs/tables/table_rate_sensitivity.png"),
+  url   = paste0("file://", here::here("outputs/tables/table8_rate_sensitivity.html")),
+  file  = here::here("outputs/tables/table8_rate_sensitivity.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-file.remove(here::here("outputs/tables/table_rate_sensitivity.html"))
-cat("Saved outputs/tables/table_rate_sensitivity.png\n")
+file.remove(here::here("outputs/tables/table8_rate_sensitivity.html"))
+cat("Saved outputs/tables/table8_rate_sensitivity.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE 10 — Geospatial Map: The Indy Squeeze (Zip-Level)
@@ -940,7 +1009,8 @@ indy_squeeze_map <- ggplot(data = map_data) +
   labs(
     title    = "The Indy Squeeze: Housing Vulnerability by Zip Code",
     subtitle = paste0("Calculated using the full population of STATS Indiana SDF Transactions",
-                      " (2021-2025).\nAreas in dark red face the most severe price-to-income",
+                      " (", year_range_label,
+                      ").\nAreas in dark red face the most severe price-to-income",
                       " decoupling."),
     caption  = "Source: STATS Indiana SDF & U.S. Census Bureau (ZCTA HHI)."
   ) +
@@ -954,9 +1024,9 @@ indy_squeeze_map <- ggplot(data = map_data) +
 
 # 7. EXPORT
 # ---------------------------------------------------------
-ggsave(here::here("outputs/figures/fig10_zip_squeeze_map.png"),
+ggsave(here::here("outputs/figures/fig13_zip_squeeze_map.png"),
        plot = indy_squeeze_map, width = 10, height = 8, dpi = 300, bg = "white")
-ggsave(here::here("outputs/figures/fig10_zip_squeeze_map.pdf"),
+ggsave(here::here("outputs/figures/fig13_zip_squeeze_map.pdf"),
        plot = indy_squeeze_map, width = 10, height = 8)
 
 
@@ -968,11 +1038,11 @@ saveRDS(m_price_interact,    here::here("data/processed/m_price_interact.rds"))
 saveRDS(m_did_price_triple,  here::here("data/processed/m_did_price_triple.rds"))
 saveRDS(m_did_volume_triple, here::here("data/processed/m_did_volume_triple.rds"))
 
-cat("Figures: outputs/figures/fig_histogram_price.png/.pdf, fig9.png/.pdf,",
-    "fig10.png/.pdf\n")
-cat("Tables:  outputs/tables/table2_dom_models.png, table3_price_models.png,",
-    "table4_did_models.png, table5_hypothesis_test.png,",
-    "table6_correlation.png, table6b_standard_error.png,",
-    "table_rate_sensitivity.png\n")
+cat("Figures: outputs/figures/fig11_histogram_price.png/.pdf,",
+    "fig12_marginal_effects.png/.pdf, fig13_zip_squeeze_map.png/.pdf\n")
+cat("Tables:  outputs/tables/table5_dom_models.png, table6_price_models.png,",
+    "table7_did_models.png, table2_hypothesis_test.png,",
+    "table3_correlation.png, table4_standard_error.png,",
+    "table8_rate_sensitivity.png\n")
 cat("Models:  data/processed/m_price_interact.rds, m_did_price_triple.rds,",
     "m_did_volume_triple.rds\n")
