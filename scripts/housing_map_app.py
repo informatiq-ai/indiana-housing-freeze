@@ -79,23 +79,6 @@ def load_zip_csv() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_zip_geojson() -> dict:
-    zip_cache = ROOT / "data/processed/indiana_zips.geojson"
-    if zip_cache.exists():
-        with open(zip_cache) as f:
-            return json.load(f)
-    response = requests.get(
-        "https://raw.githubusercontent.com/OpenDataDE/"
-        "State-zip-code-GeoJSON/master/in_indiana_zip_codes_geo.min.json",
-        timeout=30,
-    )
-    data = response.json()
-    with open(zip_cache, "w") as f:
-        json.dump(data, f)
-    return data
-
-
-@st.cache_data(show_spinner=False)
 def load_zip_geojson_simplified() -> dict:
     # Pre-simplified offline by scripts/build_simplified_geojson.py; loaded
     # straight from disk to skip the GeoPandas simplify pass at app start.
@@ -261,7 +244,6 @@ def _county_label_trace(counties_sub: gpd.GeoDataFrame) -> go.Scattermap:
 
 
 def _city_marker_trace() -> go.Scattermap:
-    # Scattermapbox markers use Mapbox/Maki symbols; "circle-stroked" gives a hollow ring
     return go.Scattermap(
         lat=[c[1] for c in CITY_POINTS],
         lon=[c[2] for c in CITY_POINTS],
@@ -272,22 +254,6 @@ def _city_marker_trace() -> go.Scattermap:
         marker=dict(size=3, symbol="circle-stroked", color="#888"),
         hoverinfo="skip", showlegend=False,
     )
-
-
-def _zip_centroid(geojson: dict, zip_code: str) -> tuple:
-    """Return (lat, lon) mean centroid for a ZIP from GeoJSON polygon coordinates."""
-    for feat in geojson["features"]:
-        if feat.get("properties", {}).get("ZCTA5CE10") == zip_code:
-            geom = feat["geometry"]
-            ring = (
-                geom["coordinates"][0]
-                if geom["type"] == "Polygon"
-                else max(geom["coordinates"], key=lambda p: len(p[0]))[0]
-            )
-            lons = [c[0] for c in ring]
-            lats = [c[1] for c in ring]
-            return sum(lats) / len(lats), sum(lons) / len(lons)
-    return None, None
 
 
 # ── Map builders ──────────────────────────────────────────────────────────────
@@ -534,7 +500,7 @@ LEDE = {
 }
 
 ABOUT_TEXT = (
-    "Sale price data covers 271,047 arm's-length residential property transfers recorded in "
+    "Sale price data covers 269,992 arm's-length residential property transfers recorded in "
     "Boone, Hamilton, Hendricks, Marion, and Johnson counties between 2021 and 2025, sourced "
     "from STATS Indiana deed records. Household income figures are ZIP-code level medians from "
     "the U.S. Census Bureau's 2023 American Community Survey 5-year estimates. "

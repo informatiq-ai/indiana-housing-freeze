@@ -163,7 +163,7 @@ panel_data %>%
     title    = "The Mortgage Rate Lock-In Gap, 2021–2025",
     subtitle = "Shaded area = payment shock for homeowners trading a 3% mortgage for current rates",
     x = NULL, y = "30-year fixed rate",
-    caption  = "Source: Freddie Mac MORTGAGE30US via FRED"
+    caption  = "Source: FRED (MORTGAGE30US)"
   ) +
   theme_squeeze
 
@@ -683,7 +683,7 @@ cat("Pearson r:", round(overall_cor, 3), "\n")
 cat("R-squared:", round(overall_cor^2, 3), "\n")
 cat("N zip codes:", nrow(zip_data), "\n")
 
-# ── Fig12 plot ────────────────────────────────────────────────────────────────
+# ── Fig10 plot ────────────────────────────────────────────────────────────────
 zip_data %>%
   ggplot(aes(x = zcta_hhi, y = median_sale_price, color = county)) +
   geom_point(aes(size = transactions), alpha = 0.7) +

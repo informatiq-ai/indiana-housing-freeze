@@ -132,6 +132,11 @@ latest_row    <- panel_data %>%
 current_gap   <- round(latest_row$rate_gap[1], 1)
 current_rate  <- round(latest_row$mortgage_rate[1], 1)
 
+# Peak rate gap observed across the panel — used in figure 12 caption to
+# anchor the historical maximum without a hard-coded value
+peak_gap_pp   <- round(max(panel_data$rate_gap, na.rm = TRUE), 1)
+peak_rate_pct <- round(peak_gap_pp + RATE_BASELINE, 1)
+
 # Marion HHI carried forward from panel_data for any narrative references
 marion_hhi <- panel_data %>%
   filter(county == "Marion") %>%
@@ -329,7 +334,7 @@ tbl_combined <- bind_rows(overall_row, section_seg, seg_results,
 
 datasummary_df(
   tbl_combined,
-  title = "Table 5: Hypothesis Test \u2014 Welch Two-Sample T-Test, Pre vs Post Rate Shock",
+  title = "Table 2: Hypothesis Test \u2014 Welch Two-Sample T-Test, Pre vs Post Rate Shock",
   notes = paste0(
     "H\u2080: \u03bc_pre = \u03bc_post \u00b7 ",
     "H\u2081: \u03bc_pre \u2260 \u03bc_post (two-tailed) \u00b7 ",
@@ -389,7 +394,7 @@ cat("Transaction-level r(HHI, log price) =", cor_txn_label,
 
 datasummary_correlation(
   cor_data,
-  title  = "Table 6: Pearson Correlation Matrix — Key Continuous Variables",
+  title  = "Table 3: Pearson Correlation Matrix — Key Continuous Variables",
   notes = paste0(
     "N = ", n_cor_label, " individual transactions. Pearson r. ",
     "Note: transaction-level r = ", cor_txn_label,
@@ -430,7 +435,7 @@ se_table <- sdf %>%
 
 datasummary_df(
   se_table,
-  title  = "Table 6b: Standard Error of Log Sale Price by Price Segment",
+  title  = "Table 4: Standard Error of Log Sale Price by Price Segment",
   notes  = paste0("SE = SD / \u221aN \u00b7 95% CI = mean \u00b1 1.96 \u00d7 SE \u00b7 ",
                   "DV = log sale price \u00b7 N = ", n_label),
   output = here::here("outputs/tables/table4_standard_error.html"),
@@ -639,7 +644,7 @@ modelsummary(
   coef_map  = coef_map,
   coef_omit = "factor\\(county\\)|factor\\(year\\)",
   gof_map   = c("nobs", "r.squared", "adj.r.squared"),
-  title     = "Table 2: Simple and Multiple Regression — Days on Market (Redfin Panel)",
+  title     = "Table 5: Simple and Multiple Regression — Days on Market (Redfin Panel)",
   notes     = paste0(
     "Simple DV is log sale price. DOM models DV is median DOM, ",
     "Redfin county-month panel (N=", n_panel, "). HC1 robust SEs. ",
@@ -660,7 +665,7 @@ modelsummary(
   coef_map  = coef_map,
   coef_omit = "factor\\(county\\)|factor\\(year\\)",
   gof_map   = c("nobs", "r.squared", "adj.r.squared"),
-  title     = "Table 3: Rate Lock-In Effect on Sale Prices",
+  title     = "Table 6: Rate Lock-In Effect on Sale Prices",
   notes     = paste0(
     "Source: STATS Indiana SDF deed records. ",
     "DV: log sale price. N=", n_label, " transactions. HC1 robust SEs. ",
@@ -685,7 +690,7 @@ modelsummary(
   coef_map  = coef_map,
   coef_omit = "factor\\(county\\)|factor\\(year\\)",
   gof_map   = c("nobs", "r.squared", "adj.r.squared"),
-  title     = "Table 4: Difference-in-Differences Estimates — Price and Volume",
+  title     = "Table 7: Difference-in-Differences Estimates — Price and Volume",
   notes     = paste0(
     "Treatment = suburban counties (proxy for move-up buyers). ",
     "Control = Marion County (proxy for necessity-driven buyers). ",
@@ -865,9 +870,9 @@ scale_color_manual(
       "luxury slope (", slope_luxury, "%/pp) reflects thin market volatility, ",
       "not behavioral rate sensitivity\n",
       "(~", luxury_annual, " transactions/county/year). ",
-      "At 4.5pp gap = ", 4.5 + RATE_BASELINE,
-      "% mortgage rate (observed late 2023).\n",
-      "Dashed line at 3.1pp = current rate gap at time of study."
+      "Peak observed gap of ", peak_gap_pp, "pp = ", peak_rate_pct,
+      "% mortgage rate in the panel window.\n",
+      "Dashed line at ", current_gap, "pp = current rate gap at time of study."
     )
   ) +
   theme_minimal(base_size = 13) +

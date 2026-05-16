@@ -12,7 +12,7 @@ The following filters are applied to isolate arm's-length residential sales meet
 - Arm's-length qualification: `B1_Valuable_Consider = Y`, with `C1_Sheriff_Sale = N`, `C2_Short_Sale = N`, and `C3_Quitclaim = N`
 - Sale price at or above $50,000
 
-SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appears in multiple annual SALEPARCEL files, the record from the most recent year is retained to reflect current assessor data. The five-county study area (Marion, Hamilton, Boone, Hendricks, Johnson) is enforced by a normalized county-name filter applied during ingestion. After all filters, the dataset contains 271,047 arm's-length residential transactions. This file is distributed in `data/processed/sdf_indiana.csv` as the pre-processed substitute; the original SDF flat files are not redistributed.
+SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appears in multiple annual SALEPARCEL files, the record from the most recent year is retained to reflect current assessor data. The five-county study area (Marion, Hamilton, Boone, Hendricks, Johnson) is enforced by a normalized county-name filter applied during ingestion. After all filters, the dataset contains 269,992 arm's-length residential transactions. This file is distributed in `data/processed/sdf_indiana.csv` as the pre-processed substitute; the original SDF flat files are not redistributed.
 
 ## Redfin County Market Tracker
 
@@ -30,7 +30,7 @@ The ACS 2023 5-year estimates are cross-sectional and applied uniformly across a
 
 ## FRED MORTGAGE30US
 
-The Federal Reserve Bank of St. Louis publishes the weekly 30-year fixed mortgage rate series (MORTGAGE30US) through the FRED API. `scripts/01_data_pipeline.R` queries this series for the period January 2021 through December 2025 and converts weekly observations to monthly averages. The `rate_gap` variable is then computed as `mortgage_rate - 3.0`, where 3.0 percentage points represents the approximate 2021 baseline rate. The post-shock indicator is set to 1 when `rate_gap >= 2.0`. Access requires a `FRED_API_KEY` set in `.Renviron`. If the December 2025 rate observation is not yet available, the pipeline falls back to the most recent available month with a console warning.
+The Federal Reserve Bank of St. Louis publishes the weekly 30-year fixed mortgage rate series (MORTGAGE30US) through the FRED API. `scripts/01_data_pipeline.R` queries this series for the period January 2021 through December 2025 and converts weekly observations to monthly averages. The `rate_gap` variable is then computed as `mortgage_rate - 3.0`, where 3.0 percentage points represents the approximate 2021 baseline rate. The post-shock indicator is set to 1 when `rate_gap >= 2.0` percentage points (a roughly 5% prevailing mortgage rate), a threshold first crossed in mid-2022. Access requires a `FRED_API_KEY` set in `.Renviron`. If the December 2025 rate observation is not yet available, the pipeline falls back to the most recent available month with a console warning.
 
 ## Study Area
 

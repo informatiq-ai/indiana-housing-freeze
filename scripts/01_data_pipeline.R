@@ -23,7 +23,7 @@
 
 # ── Package setup ─────────────────────────────────────────────────────────────
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, fredr, httr, jsonlite, here)
+pacman::p_load(tidyverse, fredr, httr, jsonlite, here, scales)
 
 # ── API keys (stored in .Renviron) ────────────────────────────────────────────
 CENSUS_API_KEY <- Sys.getenv("CENSUS_API_KEY")
@@ -128,6 +128,16 @@ if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+# STEP 3: ZCTA HHI — UPSTREAM DEPENDENCY FROM 00_data_pipeline.py
+# ZCTA-level median household income (B19013_001E) is pulled and cached by
+# 00_data_pipeline.py (Step 3c) into data/processed/hhi_zcta.csv, then joined
+# into data/processed/zip_median_prices.csv before this script runs.
+# This script consumes the enriched zip_median_prices.csv directly below
+# (Step 7) — no API call is required here. Documented as its own step so the
+# pipeline dependency graph is explicit.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
 # STEP 4: FRED — 30-YEAR FIXED MORTGAGE RATE
 # Series: MORTGAGE30US | monthly average
 # rate_gap = mortgage_rate − 3.0 (2021 baseline ~3%)
@@ -155,7 +165,9 @@ cat("Rate range:", round(min(rates_raw$mortgage_rate), 2),
 # Source: Indiana Dept of Local Government Finance / IBRC
 # Arm's-length residential sales only; excludes sheriff sales, quitclaims
 # Price segments: entry <$400K, mid_luxury $400K–$1M, luxury >$1M
-# luxury tier capped at $15M (removes 32 data entry errors, 0.6% of luxury)
+# The $15M ceiling is enforced upstream in 00_data_pipeline.py before sdf_indiana.csv
+# is written; the filter below is a defensive no-op kept as documentation that this
+# step expects price-bounded input and would drop any contaminated rows if reintroduced.
 # ══════════════════════════════════════════════════════════════════════════════
 
 sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"), show_col_types = FALSE) %>%

@@ -8,11 +8,11 @@ Does mortgage rate lock-in disproportionately suppress mid-luxury transaction vo
 
 ## Key Findings
 
-Mid-luxury properties are 3.9 times more sensitive to the rate lock-in gap than entry-tier homes (−7.1%/pp vs. −1.8%/pp, derived from the price interaction model, N = 271,047). At the current 3.1 percentage point gap above the 2021 baseline, mid-luxury prices are estimated approximately 20% below their pre-shock trajectory. The DiD triple interaction (Suburb × Post × Mid-luxury) is negative and statistically significant (p < 0.01), confirming that suburban mid-luxury properties bear a disproportionate burden from the rate shock. A Welch two-sample t-test shows entry-tier prices appreciated 10.2% post-shock while mid-luxury appreciated only 3%, with both differences rejecting the null hypothesis (p < 2.2e-16). Marion County never produces meaningful mid-luxury volume, not because of rate sensitivity, but because its median household income ($63,450) structurally precludes sustained demand in that price range. The two mechanisms converge on the same market freeze through different channels.
+Mid-luxury properties are 4.5 times more sensitive to the rate lock-in gap than entry-tier homes (−4.9%/pp vs. −1.1%/pp, derived from the price interaction model, N = 269,992). At the current 3.2 percentage point gap above the 2021 baseline, mid-luxury prices are estimated approximately 14.9% below their pre-shock trajectory. The DiD triple interaction (Suburb × Post × Mid-luxury) is statistically significant (p < 0.01), confirming that suburban mid-luxury properties bear a disproportionate burden from the rate shock relative to the Marion County baseline. A Welch two-sample t-test shows entry-tier prices appreciated 7.2% post-shock while mid-luxury appreciated only 3.0%, with both differences rejecting the null hypothesis (p < 2.2e-16). Marion County never produces meaningful mid-luxury volume, not because of rate sensitivity, but because its median household income ($63,450) structurally precludes sustained demand in that price range. The two mechanisms converge on the same market freeze through different channels.
 
 ## Data
 
-**STATS Indiana Sales Disclosure Form (SDF) deed records** provide 271,047 arm's-length residential transactions across five Indianapolis-area counties, 2021–2025. Filters applied: residential-only parcels (C10 flags), arm's-length qualification (B1_Valuable_Consider = Y; no sheriff, short, or quitclaim sales), and sale price at or above $50K.
+**STATS Indiana Sales Disclosure Form (SDF) deed records** provide 269,992 arm's-length residential transactions across five Indianapolis-area counties, 2021–2025. Filters applied: residential-only parcels (C10 flags), arm's-length qualification (B1_Valuable_Consider = Y; no sheriff, short, or quitclaim sales), and sale price at or above $50K.
 
 **Redfin county market tracker** supplies monthly county-level median sale price, days on market, sale-to-list ratio, months of supply, and seller stress indicators (share sold above list, share with price drops), filtered to the five study counties for 2021–2025.
 
@@ -36,17 +36,17 @@ Source: Census ACS 2023 5-year estimates.
 
 ## Price Segmentation
 
-Price tiers are derived from k-means clustering (k = 4) on log(sale_price), with the top two clusters collapsed due to insufficient ultra-luxury sample size (n = 48 ultra-luxury vs. 3,547 luxury). Natural breakpoints fall at approximately $388K and $1.04M.
+Price tiers are derived from k-means clustering (k = 4) on raw sale_price (with a pre-fit cap at $15M to suppress data-entry outliers), with the top two clusters collapsed due to insufficient ultra-luxury sample size (n = 112 ultra-luxury vs. 4,702 luxury). Natural breakpoints fall at approximately $388K and $1.04M.
 
 | Segment | Price Range | N (2021–2025) |
 |---------|-------------|---------------|
-| Entry | Below $388K | 187,540 |
-| Mid-luxury | $388K to $1M | 78,666 |
-| Luxury | Above $1M | 4,814 |
+| Entry | Below $388K | 186,820 |
+| Mid-luxury | $388K to $1M | 78,360 |
+| Luxury | Above $1M | 4,812 |
 
 ## Identification Strategy
 
-The DiD design exploits the 2022 Federal Reserve tightening cycle as a quasi-natural experiment. The rate lock-in gap (`rate_gap = mortgage_rate − 3.0`) measures percentage points above the 2021 baseline. The post-shock indicator activates when `rate_gap >= 2.0`. Treatment is defined by geography: suburban counties (Hamilton, Boone, Hendricks, Johnson) vs. Marion County (control). The triple interaction (Suburb × Post × Mid-luxury) isolates the differential rate-shock effect on suburban mid-luxury properties net of geography and time main effects.
+The DiD design exploits the 2022 Federal Reserve tightening cycle as a quasi-natural experiment. The rate lock-in gap (`rate_gap = mortgage_rate − 3.0`) measures percentage points above the 2021 baseline. The post-shock indicator activates when `rate_gap >= 2.0` percentage points (a roughly 5% prevailing mortgage rate), which is crossed in mid-2022 in the FRED series. Treatment is defined by geography: suburban counties (Hamilton, Boone, Hendricks, Johnson) vs. Marion County (control). The triple interaction (Suburb × Post × Mid-luxury) isolates the differential rate-shock effect on suburban mid-luxury properties net of geography and time main effects.
 
 The parallel trends assumption is verified graphically for the pre-shock period (Figure 8): Marion County and suburban sale prices track together at similar growth rates from 2021 through early 2022 and diverge only after the rate shock, supporting DiD validity.
 
@@ -57,9 +57,8 @@ data/
   raw/           # Original source files -- do not modify
   processed/     # Cleaned outputs from pipeline scripts
 outputs/
-  figures/       # Static charts (.png)
+  figures/       # Static charts (.png and .pdf)
   tables/        # Regression and summary tables (.png)
-  interactive/   # Interactive HTML maps
 scripts/         # All analysis scripts (R and Python)
 docs/            # Write-ups and publication drafts
 ```
@@ -82,7 +81,7 @@ The app provides three switchable views via radio button:
 
 - **Median Household Income** — ZCTA-level medians from the 2023 ACS 5-year estimates, weighted by transaction count. Hover shows HHI, median sale price, affordability ratio, mid-luxury share, and transaction count.
 - **Median Sale Price** — Transaction-weighted median sale price by ZIP, 2021–2025. Hover shows price, transaction count, and mid-luxury share.
-- **Housing Squeeze Index** — Price-to-income ratio (median sale price ÷ median HHI) by ZIP; 4× marks the stress threshold. Hover shows HHI, median price, and squeeze ratio with stepped RdBu coloring.
+- **Affordability Stress Ratio** — Price-to-income ratio (median sale price ÷ median HHI) by ZIP; 4× marks the stress threshold. Hover shows HHI, median price, and stress ratio with stepped RdBu coloring.
 
 ## Scripts
 
