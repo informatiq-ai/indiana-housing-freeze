@@ -683,7 +683,7 @@ cat("Pearson r:", round(overall_cor, 3), "\n")
 cat("R-squared:", round(overall_cor^2, 3), "\n")
 cat("N zip codes:", nrow(zip_data), "\n")
 
-# ── Fig10 plot ────────────────────────────────────────────────────────────────
+# ── Figure 10 plot ───────────────────────────────────────────────────────────
 zip_data %>%
   ggplot(aes(x = zcta_hhi, y = median_sale_price, color = county)) +
   geom_point(aes(size = transactions), alpha = 0.7) +

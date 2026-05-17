@@ -149,7 +149,7 @@ cat("Unit of analysis 1: County-month cell —", nrow(panel_data), "obs\n")
 cat("Unit of analysis 2: Individual deed record —", nrow(sdf), "transactions\n\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HISTOGRAM — Distribution of log sale price
+# FIGURE 11 — Distribution of log sale price
 # Right skew on raw scale → log transformation normalizes distribution
 # Justifies log-linear regression specification throughout
 # ══════════════════════════════════════════════════════════════════════════════
@@ -207,8 +207,7 @@ ggsave(here::here("outputs/figures/fig11_histogram_price.pdf"), width = 9, heigh
 cat("Saved fig11_histogram_price.png/.pdf — median:", median_label, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCATTERPLOT NOTE — HHI vs median sale price
-# fig10_hhi_price_correlation.png produced in 02_eda_descriptive_stats.R
+# FIGURE 10 NOTE — HHI vs median sale price (produced in 02_eda_descriptive_stats.R)
 # Shows median sale price (DV) vs median household income (key IV/control)
 # Illustrates two-mechanism hypothesis: Marion clusters bottom-left (income-constrained), Hamilton top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -219,7 +218,7 @@ cat("ZIP-level HHI-price correlation: r =", fig10_stats$r,
     "| N =", fig10_stats$n_zip, "zip codes\n\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HYPOTHESIS TEST — Pre vs post rate shock
+# TABLE 2 — Hypothesis test: Welch two-sample t-test, pre vs post rate shock
 # H0: Mean log sale price is equal pre vs post rate shock
 # H1: Mean log sale price differs post rate shock
 # Method: Welch two-sample t-test (unequal variances — var.equal = FALSE)
@@ -354,7 +353,9 @@ webshot2::webshot(
 file.remove(here::here("outputs/tables/table2_hypothesis_test.html"))
 cat("Saved table2_hypothesis_test.png\n")
 
-# ══ STANDARD ERROR + CORRELATION ═════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# TABLE 3 and TABLE 4 — Pearson correlation matrix and standard error by segment
+# ══════════════════════════════════════════════════════════════════════════════
 
 cat("── Standard Errors ──────────────────────────────────────────────────\n")
 se <- function(x) sd(x, na.rm = TRUE) / sqrt(sum(!is.na(x)))
@@ -450,7 +451,7 @@ file.remove(here::here("outputs/tables/table4_standard_error.html"))
 cat("Saved table4_standard_error.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SIMPLE AND MULTIPLE REGRESSION
+# REGRESSION MODELS — produces Tables 5, 6, and 7
 # Model naming: m_{outcome}_{specification}
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -603,7 +604,7 @@ cat("treated × post × mid_luxury =", vol_did_est,
 print(robust_se(m_did_volume_triple))
 
 # ══════════════════════════════════════════════════════════════════════════════
-# REGRESSION TABLES
+# TABLES 5, 6, 7 — DOM models, price models, DiD models
 # modelsummary chosen over stargazer for HTML output and vcov argument support
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -716,7 +717,7 @@ for (tbl in c("table5_dom_models", "table6_price_models", "table7_did_models")) 
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 9 — Marginal effects: predicted price by rate gap and segment
+# FIGURE 12 — Marginal effects: predicted price by rate gap and segment
 # Derived from m_price_interact using segment-specific median controls
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -891,7 +892,7 @@ ggsave(here::here("outputs/figures/fig12_marginal_effects.pdf"), width = 10, hei
 cat("Saved fig12_marginal_effects.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RATE SENSITIVITY — derived directly from model coefficients
+# TABLE 8 — Rate sensitivity by price segment
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Log-scale slopes used for the per-rate forecast scenarios in forecast_tbl
@@ -944,7 +945,7 @@ file.remove(here::here("outputs/tables/table8_rate_sensitivity.html"))
 cat("Saved outputs/tables/table8_rate_sensitivity.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 10 — Geospatial Map: The Indy Squeeze (Zip-Level)
+# FIGURE 13 — Geospatial Map: The Indy Squeeze (Zip-Level)
 # ZIP-level price-to-income stress ratio mapped using national ZCTA shapefiles
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -992,10 +993,50 @@ highlight_zips <- map_data %>%
   filter(GEOID20 %in% c("46202", "46236")) %>%
   mutate(centroid = st_centroid(geometry))
 
+# 5a. COUNTY BOUNDARIES — five-county study area
+# cb = TRUE uses a simplified cartographic boundary file (smaller download)
+study_fips <- c("18097", "18057", "18011", "18063", "18081")
+study_counties <- counties(state = "IN", cb = TRUE, progress_bar = FALSE) %>%
+  filter(GEOID %in% study_fips) %>%
+  st_transform(st_crs(map_data))
+
+# 5b. CITY POINT MARKERS — coordinates from housing_map_app.py CITY_POINTS
+city_points <- tibble(
+  city = c("Indianapolis", "Carmel", "Fishers", "Noblesville", "Zionsville",
+           "Whitestown", "Avon", "Brownsburg", "Greenwood", "Plainfield",
+           "Mooresville", "Franklin", "Greenfield"),
+  lat  = c(39.7684, 39.9784, 39.9567, 40.0456, 39.9506,
+           39.9914, 39.7626, 39.8437, 39.6137, 39.7042,
+           39.6128, 39.4806, 39.7870),
+  lon  = c(-86.1581, -86.1180, -85.9669, -85.9669, -86.2661,
+           -86.3522, -86.3994, -86.3969, -86.1066, -86.3994,
+           -86.3730, -86.0558, -85.7697)
+) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
+  st_transform(st_crs(map_data))
+
 # 6. BUILD THE MAP
 # ---------------------------------------------------------
 indy_squeeze_map <- ggplot(data = map_data) +
   geom_sf(aes(fill = stress_ratio), color = "white", size = 0.1) +
+  geom_sf(data = study_counties, fill = NA, color = "#333333", linewidth = 0.6) +
+  geom_sf(data = city_points, size = 2, shape = 21,
+          fill = "#333333", color = "white", stroke = 0.5) +
+  geom_text_repel(
+    data        = city_points,
+    aes(label   = city, geometry = geometry),
+    stat        = "sf_coordinates",
+    size        = 2.8,
+    family      = "sans",
+    color       = "#111111",
+    bg.color    = "white",
+    bg.r        = 0.15,
+    box.padding = 0.3,
+    min.segment.length = 0.3,
+    segment.color = "grey50",
+    segment.size  = 0.3,
+    max.overlaps  = 20
+  ) +
   scale_fill_gradientn(
     colors = c("#4472C4", "#F2F2F2", "#ED7D31", "#C00000"),
     values = rescale(c(2, 4, 6, 9)),
