@@ -7,3 +7,4 @@ requests>=2.31.0
 streamlit>=1.30.0
 streamlit-screen-stats==0.0.82
 streamlit-local-storage==0.0.25
+streamlit-browser-session-storage==0.0.12
