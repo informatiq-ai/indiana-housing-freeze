@@ -1,5 +1,4 @@
-# pip install streamlit plotly geopandas
-
+import io
 import json
 import streamlit as st
 import pandas as pd
@@ -10,13 +9,14 @@ import requests
 import numpy as np
 from pathlib import Path
 from st_screen_stats import ScreenData
+from typing import Any, Dict, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 
 TARGET_FIPS = ["18097", "18057", "18011", "18063", "18081"]
 
 MAP_CENTER = {"lat": 39.82, "lon": -86.20}
-MAP_ZOOM   = 8.0
+MAP_ZOOM: int = 8
 
 CITY_POINTS = [
     ("Indianapolis",  39.7684, -86.1581),
@@ -92,7 +92,7 @@ def load_county_boundaries() -> gpd.GeoDataFrame:
             "master/geojson-counties-fips.json",
             timeout=60,
         )
-        counties_gdf = gpd.read_file(county_resp.text.encode())
+        counties_gdf = gpd.read_file(io.BytesIO(county_resp.content))
         counties_gdf.to_file(county_cache, driver="GeoJSON")
     return counties_gdf[counties_gdf["id"].isin(TARGET_FIPS)].to_crs(epsg=4326)
 
@@ -187,20 +187,43 @@ def _prep_squeeze_data(zip_data: pd.DataFrame) -> pd.DataFrame:
     return zip_agg
 
 
+# ── Config Helpers ───────────────────────────────────────────────────────────
+
+def _get_map_layout_configs(is_mobile: bool) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Centralize responsive colorbar and margin settings."""
+    if is_mobile:
+        colorbar = {
+            "orientation": "h", "x": 0.5, "y": -0.05, "xanchor": "center", "yanchor": "top",
+            "len": 0.7, "thickness": 10, "tickfont": {"size": 8},
+            "title": {"font": {"size": 9}, "side": "top"},
+        }
+        margin = {"l": 0, "r": 0, "t": 10, "b": 60}
+    else:
+        colorbar = {
+            "orientation": "v", "x": 1.02, "y": 0.5, "xanchor": "left", "yanchor": "middle",
+            "len": 0.5, "thickness": 14, "tickfont": {"size": 10},
+            "title": {"font": {"size": 10}},
+        }
+        margin = {"l": 0, "r": 80, "t": 10, "b": 10}
+    return colorbar, margin
+
+
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 def _county_outline_trace(counties_sub: gpd.GeoDataFrame) -> go.Scattermap:
     """Extract exterior ring coordinates from county polygons for a border overlay."""
-    lats: list = []
-    lons: list = []
-    gdf_4326 = counties_sub.to_crs(epsg=4326)
-    for geom in gdf_4326.geometry:
-        rings = (
-            [geom.exterior]
-            if geom.geom_type == "Polygon"
-            else [p.exterior for p in geom.geoms]
-        )
+    lats: list[float | None] = []
+    lons: list[float | None] = []
+    for geom in counties_sub.geometry:
+        if getattr(geom, "geom_type", "") == "Polygon":
+            rings = [getattr(geom, "exterior", None)]
+        elif getattr(geom, "geom_type", "") == "MultiPolygon":
+            rings = [getattr(p, "exterior", None) for p in getattr(geom, "geoms", [])]
+        else:
+            continue
         for ring in rings:
+            if ring is None:
+                continue
             xs, ys = ring.xy
             lons.extend(list(xs) + [None])
             lats.extend(list(ys) + [None])
@@ -213,16 +236,15 @@ def _county_outline_trace(counties_sub: gpd.GeoDataFrame) -> go.Scattermap:
 
 def _county_label_trace(counties_sub: gpd.GeoDataFrame) -> go.Scattermap:
     # representative_point() is guaranteed to lie inside the polygon, unlike
-    # .centroid which can fall outside concave shapes.
-    gdf_4326 = counties_sub.to_crs(epsg=4326)
-    names: list = []
-    lats: list = []
-    lons: list = []
-    for _, row in gdf_4326.iterrows():
+    # .centroid which can fall outside concave shapes. GeoDataFrame is already 4326.
+    names: list[str] = []
+    lats: list[float] = []
+    lons: list[float] = []
+    for _, row in counties_sub.iterrows():
         name = row.get("NAME", "")
         if not name:
             continue
-        pt = row.geometry.representative_point()
+        pt = row["geometry"].representative_point()
         names.append(name)
         lats.append(pt.y)
         lons.append(pt.x)
@@ -256,24 +278,12 @@ def _city_marker_trace() -> go.Scattermap:
 def build_hhi_map(
     zip_data: pd.DataFrame,
     geojson: dict,
-    _counties_sub: gpd.GeoDataFrame,
+    counties_sub: gpd.GeoDataFrame,
     is_mobile: bool = False,
 ) -> go.Figure:
-    if is_mobile:
-        colorbar_config = dict(
-            orientation="h", x=0.5, y=-0.05, xanchor="center", yanchor="top",
-            len=0.7, thickness=10, tickfont=dict(size=8),
-            title=dict(font=dict(size=9), side="top"),
-        )
-        margin_config = dict(l=0, r=0, t=10, b=60)
-    else:
-        colorbar_config = dict(
-            orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle",
-            len=0.5, thickness=14, tickfont=dict(size=10),
-            title=dict(font=dict(size=10)),
-        )
-        margin_config = dict(l=0, r=80, t=10, b=10)
+    colorbar_config, margin_config = _get_map_layout_configs(is_mobile)
     zip_agg, vmin, vmax = _prep_hhi_data(zip_data)
+
     fig = px.choropleth_map(
         zip_agg,
         geojson=geojson,
@@ -302,16 +312,16 @@ def build_hhi_map(
             "<extra></extra>"
         )
     )
-    fig.add_trace(_county_outline_trace(_counties_sub))
+    fig.add_trace(_county_outline_trace(counties_sub))
     fig.add_trace(_city_marker_trace())
-    fig.add_trace(_county_label_trace(_counties_sub))
+    fig.add_trace(_county_label_trace(counties_sub))
     fig.update_layout(
         margin=margin_config,
         showlegend=False,
         coloraxis_colorbar={
             **colorbar_config,
             "tickformat": "$,.0f",
-            "title": {**colorbar_config["title"], "text": "Median HHI (ACS 2023)"},
+            "title": {**colorbar_config.get("title", {}), "text": "Median HHI (ACS 2023)"},
         },
     )
     return fig
@@ -320,24 +330,12 @@ def build_hhi_map(
 def build_sale_price_map(
     zip_data: pd.DataFrame,
     geojson: dict,
-    _counties_sub: gpd.GeoDataFrame,
+    counties_sub: gpd.GeoDataFrame,
     is_mobile: bool = False,
 ) -> go.Figure:
-    if is_mobile:
-        colorbar_config = dict(
-            orientation="h", x=0.5, y=-0.05, xanchor="center", yanchor="top",
-            len=0.7, thickness=10, tickfont=dict(size=8),
-            title=dict(font=dict(size=9), side="top"),
-        )
-        margin_config = dict(l=0, r=0, t=10, b=60)
-    else:
-        colorbar_config = dict(
-            orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle",
-            len=0.5, thickness=14, tickfont=dict(size=10),
-            title=dict(font=dict(size=10)),
-        )
-        margin_config = dict(l=0, r=80, t=10, b=10)
+    colorbar_config, margin_config = _get_map_layout_configs(is_mobile)
     zip_agg, vmin, vmax = _prep_sale_price_data(zip_data)
+
     fig = px.choropleth_map(
         zip_agg,
         geojson=geojson,
@@ -361,16 +359,16 @@ def build_sale_price_map(
             "<extra></extra>"
         )
     )
-    fig.add_trace(_county_outline_trace(_counties_sub))
+    fig.add_trace(_county_outline_trace(counties_sub))
     fig.add_trace(_city_marker_trace())
-    fig.add_trace(_county_label_trace(_counties_sub))
+    fig.add_trace(_county_label_trace(counties_sub))
     fig.update_layout(
         margin=margin_config,
         showlegend=False,
         coloraxis_colorbar={
             **colorbar_config,
             "tickformat": "$,.0f",
-            "title": {**colorbar_config["title"], "text": "Median Sale Price USD (2021–2025)"},
+            "title": {**colorbar_config.get("title", {}), "text": "Median Sale Price USD (2021–2025)"},
         },
     )
     return fig
@@ -379,24 +377,12 @@ def build_sale_price_map(
 def build_squeeze_map(
     zip_data: pd.DataFrame,
     geojson: dict,
-    _counties_sub: gpd.GeoDataFrame,
+    counties_sub: gpd.GeoDataFrame,
     is_mobile: bool = False,
 ) -> go.Figure:
-    if is_mobile:
-        colorbar_config = dict(
-            orientation="h", x=0.5, y=-0.05, xanchor="center", yanchor="top",
-            len=0.7, thickness=10, tickfont=dict(size=8),
-            title=dict(font=dict(size=9), side="top"),
-        )
-        margin_config = dict(l=0, r=0, t=10, b=60)
-    else:
-        colorbar_config = dict(
-            orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle",
-            len=0.5, thickness=14, tickfont=dict(size=10),
-            title=dict(font=dict(size=10)),
-        )
-        margin_config = dict(l=0, r=80, t=10, b=10)
+    colorbar_config, margin_config = _get_map_layout_configs(is_mobile)
     zip_agg = _prep_squeeze_data(zip_data)
+
     fig = px.choropleth_map(
         zip_agg,
         geojson=geojson,
@@ -420,9 +406,9 @@ def build_squeeze_map(
             "<extra></extra>"
         )
     )
-    fig.add_trace(_county_outline_trace(_counties_sub))
+    fig.add_trace(_county_outline_trace(counties_sub))
     fig.add_trace(_city_marker_trace())
-    fig.add_trace(_county_label_trace(_counties_sub))
+    fig.add_trace(_county_label_trace(counties_sub))
     fig.update_layout(
         margin=margin_config,
         showlegend=False,
@@ -430,7 +416,7 @@ def build_squeeze_map(
             **colorbar_config,
             "tickvals": [1, 2, 3, 4, 5, 6],
             "ticktext": ["1×", "2×", "3×", "4× ◄stress", "5×", "6×+"],
-            "title": {**colorbar_config["title"], "text": "Affordability Stress Ratio (Price ÷ Income)"},
+            "title": {**colorbar_config.get("title", {}), "text": "Affordability Stress Ratio (Price ÷ Income)"},
         },
     )
     return fig
@@ -445,8 +431,8 @@ st.set_page_config(
 )
 
 # Detect viewport width; default to 1200 (desktop) until the component reports back.
-screen_d = ScreenData(setTimeout=500).st_screen_data()
-viewport_width = screen_d.get("innerWidth", 1200) if screen_d else 1200
+screen_d = ScreenData(setTimeout=200).st_screen_data()
+viewport_width = (screen_d or {}).get("innerWidth", 1200)
 is_mobile = viewport_width < 640
 
 st.markdown("""
