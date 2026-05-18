@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import requests
 import numpy as np
 from pathlib import Path
+from st_screen_stats import ScreenData
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -443,7 +444,10 @@ st.set_page_config(
     layout="wide",
 )
 
-is_mobile = False
+# Detect viewport width; default to 1200 (desktop) until the component reports back.
+screen_d = ScreenData(setTimeout=500).st_screen_data()
+viewport_width = screen_d.get("innerWidth", 1200) if screen_d else 1200
+is_mobile = viewport_width < 640
 
 st.markdown("""
 <style>
