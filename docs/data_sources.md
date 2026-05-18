@@ -8,11 +8,11 @@ STATS Indiana SDF records provide the core transaction-level dataset. Annual fla
 
 The following filters are applied to isolate arm's-length residential sales meeting assessor quality standards:
 
-- Residential-only parcels: `C10` use-code flag present
-- Arm's-length qualification: `B1_Valuable_Consider = Y`, excluding sheriff sales, short sales, and quitclaim deeds
-- Sale price at or above $50,000
+- Residential-only parcels: `C10_Residential_Property = Y` and the other three `C10_*` flags (Agricultural, Commercial, Industrial) = N, which removes mixed-use parcels
+- Arm's-length qualification: `B1_Valuable_Consider = Y`, with `C1_Sheriff_Sale = N`, `C2_Short_Sale = N`, and `C3_Quitclaim = N`
+- Sale price above $50,000
 
-SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appears in multiple annual SALEPARCEL files, the record from the most recent year is retained to reflect current assessor data. The five-county study area (Marion, Hamilton, Boone, Hendricks, Johnson) is enforced by FIPS code filter. After all filters, the dataset contains 271,047 arm's-length residential transactions. This file is distributed in `data/processed/sdf_indiana.csv` as the pre-processed substitute; the original SDF flat files are not redistributed.
+SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appears in multiple annual SALEPARCEL files, the record from the most recent year is retained to reflect current assessor data. The five-county study area (Marion, Hamilton, Boone, Hendricks, Johnson) is enforced by a normalized county-name filter applied during ingestion. After all filters, the dataset contains 269,992 arm's-length residential transactions. This file is distributed in `data/processed/sdf_indiana.csv` as the pre-processed substitute; the original SDF flat files are not redistributed.
 
 ## Redfin County Market Tracker
 
@@ -22,19 +22,19 @@ Redfin publishes a public county-level market tracker updated monthly. The file 
 
 Two separate ACS queries are used, both drawing on the 2023 5-year estimates (the most recent available at time of analysis).
 
-**County-level controls** are pulled by `scripts/01_data_pipeline.R` via the Census API (variable `B19013_001E` for median household income and `B01001_001E` for total population) for the five study counties. These are used as controls in the county-month panel regression models. Results are cached at `data/processed/census_county_controls.csv` after the first successful API call.
+**County-level controls** are pulled by `scripts/01_data_pipeline.R` via the Census API (variable `B19013_001E` for median household income and `B01003_001E` for total population) for the five study counties. These are used as controls in the county-month panel regression models. Results are cached at `data/processed/census_county_controls.csv` after the first successful API call.
 
-**ZCTA-level median household income** is pulled by `scripts/00_data_pipeline.py` (Step 3c) via the Census API for all ZIP Code Tabulation Areas in Indiana. Records are filtered to the ZIP codes present in the SDF deed records. The ZCTA-level HHI is joined to the deed record dataset to support ZIP-code-level affordability analysis and the squeeze map (Figure 10). Results are cached at `data/processed/hhi_zcta.csv`.
+**ZCTA-level median household income** is pulled by `scripts/00_data_pipeline.py` (Step 3c) via the Census API as a single national request (`for=zip code tabulation area:*`), then filtered to the ZIP codes present in the SDF deed records. The ZCTA-level HHI is joined to the deed record dataset to support ZIP-code-level affordability analysis and the squeeze map (Figure 13). Results are cached at `data/processed/hhi_zcta.csv`.
 
 The ACS 2023 5-year estimates are cross-sectional and applied uniformly across all study years. This means year-over-year variation in county or ZIP income is not captured; the income controls reflect end-of-study conditions rather than a true time-varying series.
 
 ## FRED MORTGAGE30US
 
-The Federal Reserve Bank of St. Louis publishes the weekly 30-year fixed mortgage rate series (MORTGAGE30US) through the FRED API. `scripts/01_data_pipeline.R` queries this series for the period January 2021 through December 2025 and converts weekly observations to monthly averages. The `rate_gap` variable is then computed as `mortgage_rate - 3.0`, where 3.0 percentage points represents the approximate 2021 baseline rate. The post-shock indicator is set to 1 when `rate_gap >= 2.0`. Access requires a `FRED_API_KEY` set in `.Renviron`. If the December 2025 rate observation is not yet available, the pipeline falls back to the most recent available month with a console warning.
+The Federal Reserve Bank of St. Louis publishes the weekly 30-year fixed mortgage rate series (MORTGAGE30US) through the FRED API. `scripts/01_data_pipeline.R` queries this series for the period January 2021 through December 2025 and converts weekly observations to monthly averages. The `rate_gap` variable is then computed as `mortgage_rate - 3.0`, where 3.0 percentage points represents the approximate 2021 baseline rate. The post-shock indicator is set to 1 when `rate_gap >= 2.0` percentage points (a roughly 5% prevailing mortgage rate), a threshold first crossed in mid-2022. Access requires a `FRED_API_KEY` set in `.Renviron`. If the December 2025 rate observation is not yet available, the pipeline falls back to the most recent available month with a console warning.
 
 ## Study Area
 
-The analysis covers five counties in the Indianapolis metropolitan statistical area (MSA). Marion County (Indianapolis proper) serves as the DiD control group on the basis that its income structure ($63,450 median HHI) structurally limits mid-luxury demand independent of interest rate conditions. The four suburban counties constitute the treated group.
+The analysis covers five counties in the Indianapolis metropolitan statistical area (MSA). Marion County (Indianapolis proper) serves as the DiD control group on the basis that its income structure ($63,450 median HHI) structurally limits move-up demand independent of interest rate conditions. The four suburban counties constitute the treated group.
 
 | County | Geography | Median HHI | Population |
 |--------|-----------|------------|------------|
@@ -60,4 +60,4 @@ The following variables are computed during pipeline construction and are not pr
 
 `affordability_ratio` is the estimated monthly mortgage payment as a share of median household income. The monthly payment assumes an 80% LTV ratio and the prevailing 30-year fixed rate for the observation month.
 
-`price_segment` is assigned by k-means clustering (k = 4 on log(sale_price)) with the top two clusters collapsed to luxury. The entry/mid-luxury breakpoint falls at approximately $388,000 and the mid-luxury/luxury breakpoint at approximately $1,040,000.
+`price_segment` is assigned by k-means clustering (k = 4 on raw sale_price, with a pre-fit cap at $15M to suppress data-entry outliers) with the top two clusters collapsed to luxury. The entry/move-up breakpoint falls at approximately $380,000 and the move-up/luxury breakpoint at approximately $1,050,000, validated each run against a ±$50,000 tolerance.

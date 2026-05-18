@@ -1,12 +1,12 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Indiana Mid-Luxury Housing Squeeze — Panel Data Construction
+# Indiana Move-Up Housing Squeeze — Panel Data Construction
 #
 # Research Question: Does the mortgage rate lock-in effect disproportionately
-# impact mid-luxury ($400K–$1M) homes in Indianapolis suburbs vs Marion County?
+# impact move-up ($380K–$1.05M) homes in Indianapolis suburbs vs Marion County?
 #
 # Two-mechanism hypothesis:
 #   Suburbs:       Rate lock-in freezes move-up buyers (payment shock)
-#   Marion County: Income constraint structurally thins the mid-luxury buyer pool
+#   Marion County: Income constraint structurally thins the move-up buyer pool
 #
 # Data sources:
 #   - Redfin county market tracker (DOM, sale-to-list, median price)
@@ -23,7 +23,7 @@
 
 # ── Package setup ─────────────────────────────────────────────────────────────
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, fredr, httr, jsonlite, here)
+pacman::p_load(tidyverse, fredr, httr, jsonlite, here, scales)
 
 # ── API keys (stored in .Renviron) ────────────────────────────────────────────
 CENSUS_API_KEY <- Sys.getenv("CENSUS_API_KEY")
@@ -128,6 +128,16 @@ if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+# STEP 3: ZCTA HHI — UPSTREAM DEPENDENCY FROM 00_data_pipeline.py
+# ZCTA-level median household income (B19013_001E) is pulled and cached by
+# 00_data_pipeline.py (Step 3c) into data/processed/hhi_zcta.csv, then joined
+# into data/processed/zip_median_prices.csv before this script runs.
+# This script consumes the enriched zip_median_prices.csv directly below
+# (Step 7) — no API call is required here. Documented as its own step so the
+# pipeline dependency graph is explicit.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
 # STEP 4: FRED — 30-YEAR FIXED MORTGAGE RATE
 # Series: MORTGAGE30US | monthly average
 # rate_gap = mortgage_rate − 3.0 (2021 baseline ~3%)
@@ -152,10 +162,12 @@ cat("Rate range:", round(min(rates_raw$mortgage_rate), 2),
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 5: STATS INDIANA SDF — TRANSACTION COUNTS BY PRICE BAND
-# Source: Indiana Dept of Local Government Finance / IBRC
+# Source: Indiana Dept of Local Government Finance / STATS Indiana
 # Arm's-length residential sales only; excludes sheriff sales, quitclaims
-# Price segments: entry <$400K, mid_luxury $400K–$1M, luxury >$1M
-# luxury tier capped at $15M (removes 32 data entry errors, 0.6% of luxury)
+# Price segments: entry <$380K, move_up $380K–$1.05M, luxury >$1.05M
+# The $15M ceiling is enforced upstream in 00_data_pipeline.py before sdf_indiana.csv
+# is written; the filter below is a defensive no-op kept as documentation that this
+# step expects price-bounded input and would drop any contaminated rows if reintroduced.
 # ══════════════════════════════════════════════════════════════════════════════
 
 sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"), show_col_types = FALSE) %>%
@@ -163,7 +175,7 @@ sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"), show_col_types
 
 sdf_counts <- sdf_raw %>%
   mutate(price_segment = factor(price_segment,
-                                levels = c("entry", "mid_luxury", "luxury"))) %>%
+                                levels = c("entry", "move_up", "luxury"))) %>%
   group_by(county, year, month, price_segment) %>%
   summarise(
     transactions          = n(),
@@ -177,7 +189,7 @@ sdf_counts <- sdf_raw %>%
   ) %>%
   mutate(
     transactions_total = transactions_entry +
-      transactions_mid_luxury +
+      transactions_move_up +
       transactions_luxury
   )
 
@@ -195,10 +207,10 @@ panel_data <- redfin %>%
     # Limitation: county median can shift between segments as prices appreciate
     # SDF transaction-level data resolves this in regression analysis
     price_segment = case_when(
-      median_sale_price <  388000  ~ "entry",
-      median_sale_price <= 1040000 ~ "mid_luxury",
+      median_sale_price <  380000  ~ "entry",
+      median_sale_price <= 1050000 ~ "move_up",
       TRUE                         ~ "luxury"
-    ) %>% factor(levels = c("entry", "mid_luxury", "luxury")),
+    ) %>% factor(levels = c("entry", "move_up", "luxury")),
     
     # Geography: Marion = metro core (control), suburbs = treated
     # Rationale: Marion buyers are necessity-driven; suburban buyers are
@@ -331,7 +343,7 @@ panel_data %>%
     rows             = n(),
     missing_sdf      = sum(is.na(transactions_total)),
     avg_entry_trans  = round(mean(transactions_entry,      na.rm = TRUE)),
-    avg_midlux_trans = round(mean(transactions_mid_luxury, na.rm = TRUE)),
+    avg_moveup_trans = round(mean(transactions_move_up,    na.rm = TRUE)),
     avg_luxury_trans  = round(mean(transactions_luxury,      na.rm = TRUE)),
     trans_per_1k     = round(mean(trans_per_capita,        na.rm = TRUE), 2),
     .groups = "drop"

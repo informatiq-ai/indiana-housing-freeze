@@ -55,17 +55,13 @@ PRICE_COLORSCALE = [
     [1.0, "#8C2D04"],
 ]
 
-# 4-step RdBu colorscale; discrete steps at 3×, 4×, 5× within range [1, 6].
-# Normalized breakpoints: (3-1)/(6-1)=0.40, (4-1)/5=0.60, (5-1)/5=0.80.
+# Continuous blue→white→orange→red colorscale matching fig13_zip_squeeze_map.
+# Color stops: blue(1×) → white(3×) → orange(4.5×) → dark red(6×). Range [1, 6].
 SQUEEZE_COLORSCALE = [
-    [0.0, "#2166AC"],
-    [0.4, "#2166AC"],
-    [0.4, "#92C5DE"],
-    [0.6, "#92C5DE"],
-    [0.6, "#F4A582"],
-    [0.8, "#F4A582"],
-    [0.8, "#B2182B"],
-    [1.0, "#B2182B"],
+    [0.00, "#4472C4"],
+    [0.40, "#F2F2F2"],
+    [0.70, "#ED7D31"],
+    [1.00, "#C00000"],
 ]
 
 
@@ -76,23 +72,6 @@ def load_zip_csv() -> pd.DataFrame:
     zip_data = pd.read_csv(ROOT / "data/processed/zip_median_prices.csv")
     zip_data["zip_code"] = zip_data["zip_code"].astype(str).str.zfill(5)
     return zip_data[zip_data["zip_code"] != "00000"].copy()
-
-
-@st.cache_data(show_spinner=False)
-def load_zip_geojson() -> dict:
-    zip_cache = ROOT / "data/processed/indiana_zips.geojson"
-    if zip_cache.exists():
-        with open(zip_cache) as f:
-            return json.load(f)
-    response = requests.get(
-        "https://raw.githubusercontent.com/OpenDataDE/"
-        "State-zip-code-GeoJSON/master/in_indiana_zip_codes_geo.min.json",
-        timeout=30,
-    )
-    data = response.json()
-    with open(zip_cache, "w") as f:
-        json.dump(data, f)
-    return data
 
 
 @st.cache_data(show_spinner=False)
@@ -137,8 +116,8 @@ def _prep_hhi_data(zip_data: pd.DataFrame) -> tuple:
                 weights=x["transactions"],
             ),
             "transactions":     x["transactions"].sum(),
-            "pct_mid_luxury":   np.average(
-                x["pct_mid_luxury"], weights=x["transactions"]
+            "pct_move_up":   np.average(
+                x["pct_move_up"], weights=x["transactions"]
             ),
             "afford_ratio_zip": np.average(
                 x["afford_ratio_zip"].fillna(0), weights=x["transactions"]
@@ -151,7 +130,7 @@ def _prep_hhi_data(zip_data: pd.DataFrame) -> tuple:
     zip_agg["hhi_display"]    = zip_agg["zcta_hhi"].apply(lambda x: f"${x:,.0f}")
     zip_agg["price_display"]  = zip_agg["median_sale_price"].apply(lambda x: f"${x:,.0f}")
     zip_agg["afford_display"] = zip_agg["afford_ratio_zip"].apply(lambda x: f"{x:.1%}")
-    zip_agg["midlux_display"] = zip_agg["pct_mid_luxury"].apply(lambda x: f"{x:.1f}%")
+    zip_agg["midlux_display"] = zip_agg["pct_move_up"].apply(lambda x: f"{x:.1f}%")
     zip_agg["trans_display"]  = zip_agg["transactions"].apply(lambda x: f"{int(x):,}")
     vmin = zip_agg["zcta_hhi"].quantile(0.05)
     vmax = zip_agg["zcta_hhi"].quantile(0.95)
@@ -168,15 +147,15 @@ def _prep_sale_price_data(zip_data: pd.DataFrame) -> tuple:
                 x["median_sale_price"], weights=x["transactions"]
             ),
             "transactions":   x["transactions"].sum(),
-            "pct_mid_luxury": np.average(
-                x["pct_mid_luxury"], weights=x["transactions"]
+            "pct_move_up": np.average(
+                x["pct_move_up"], weights=x["transactions"]
             ),
             "county": x.loc[x["transactions"].idxmax(), "county"],
         }))
         .reset_index()
     )
     zip_agg["price_display"]  = zip_agg["median_sale_price"].apply(lambda x: f"${x:,.0f}")
-    zip_agg["midlux_display"] = zip_agg["pct_mid_luxury"].apply(lambda x: f"{x:.1f}%")
+    zip_agg["midlux_display"] = zip_agg["pct_move_up"].apply(lambda x: f"{x:.1f}%")
     zip_agg["trans_display"]  = zip_agg["transactions"].apply(lambda x: f"{int(x):,}")
     vmin = zip_agg["median_sale_price"].quantile(0.05)
     vmax = zip_agg["median_sale_price"].quantile(0.95)
@@ -261,7 +240,6 @@ def _county_label_trace(counties_sub: gpd.GeoDataFrame) -> go.Scattermap:
 
 
 def _city_marker_trace() -> go.Scattermap:
-    # Scattermapbox markers use Mapbox/Maki symbols; "circle-stroked" gives a hollow ring
     return go.Scattermap(
         lat=[c[1] for c in CITY_POINTS],
         lon=[c[2] for c in CITY_POINTS],
@@ -272,22 +250,6 @@ def _city_marker_trace() -> go.Scattermap:
         marker=dict(size=3, symbol="circle-stroked", color="#888"),
         hoverinfo="skip", showlegend=False,
     )
-
-
-def _zip_centroid(geojson: dict, zip_code: str) -> tuple:
-    """Return (lat, lon) mean centroid for a ZIP from GeoJSON polygon coordinates."""
-    for feat in geojson["features"]:
-        if feat.get("properties", {}).get("ZCTA5CE10") == zip_code:
-            geom = feat["geometry"]
-            ring = (
-                geom["coordinates"][0]
-                if geom["type"] == "Polygon"
-                else max(geom["coordinates"], key=lambda p: len(p[0]))[0]
-            )
-            lons = [c[0] for c in ring]
-            lats = [c[1] for c in ring]
-            return sum(lats) / len(lats), sum(lons) / len(lons)
-    return None, None
 
 
 # ── Map builders ──────────────────────────────────────────────────────────────
@@ -336,7 +298,7 @@ def build_hhi_map(
             "Median HHI: %{customdata[2]}<br>"
             "Median Sale Price: %{customdata[3]}<br>"
             "Affordability Ratio: %{customdata[4]}<br>"
-            "% Mid-luxury: %{customdata[5]}<br>"
+            "% Move-up: %{customdata[5]}<br>"
             "Transactions: %{customdata[6]}"
             "<extra></extra>"
         )
@@ -396,7 +358,7 @@ def build_sale_price_map(
             "<b>ZIP %{customdata[0]}</b> — %{customdata[1]}<br>"
             "Median Price: %{customdata[2]}<br>"
             "Transactions: %{customdata[3]}<br>"
-            "% Mid-luxury: %{customdata[4]}"
+            "% Move-up: %{customdata[4]}"
             "<extra></extra>"
         )
     )
@@ -468,7 +430,7 @@ def build_squeeze_map(
         coloraxis_colorbar={
             **colorbar_config,
             "tickvals": [1, 2, 3, 4, 5, 6],
-            "ticktext": ["1×", "2×", "3×", "4× ◄stress", "5×", "6×"],
+            "ticktext": ["1×", "2×", "3×", "4× ◄stress", "5×", "6×+"],
             "title": {**colorbar_config["title"], "text": "Affordability Stress Ratio (Price ÷ Income)"},
         },
     )
@@ -522,9 +484,11 @@ LEDE = {
         "can afford to buy."
     ),
     "Median Sale Price": (
-        "Median sale prices in Hamilton County's Carmel and Fishers ZIPs surpassed $500,000 "
-        "between 2021 and 2025. Prices in Johnson County's outer ZIPs remain below $250,000 — "
-        "for now."
+        "Median sale prices in Hamilton County's northeastern corridor and Boone County's "
+        "Zionsville ZIP codes surpassed $500,000 between 2021 and 2025. Most of Marion County "
+        "and the outer ZIP codes across Boone, Hendricks, and Johnson counties remain below "
+        "$250,000 — the geographic divide that makes the rate lock-in effect so concentrated "
+        "in the suburban move-up market."
     ),
     "Affordability Stress Ratio": (
         "The affordability stress ratio measures how many years of household income it takes to "
@@ -534,7 +498,7 @@ LEDE = {
 }
 
 ABOUT_TEXT = (
-    "Sale price data covers 271,047 arm's-length residential property transfers recorded in "
+    "Sale price data covers 269,992 arm's-length residential property transfers recorded in "
     "Boone, Hamilton, Hendricks, Marion, and Johnson counties between 2021 and 2025, sourced "
     "from STATS Indiana deed records. Household income figures are ZIP-code level medians from "
     "the U.S. Census Bureau's 2023 American Community Survey 5-year estimates. "
