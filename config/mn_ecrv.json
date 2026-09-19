@@ -1,0 +1,18 @@
+{
+  "input_dir": "data/raw/mn/ecrv",
+  "database": "data/intermediate/mn/ecrv.sqlite",
+  "processed_dir": "data/processed/mn",
+  "quality_dir": "outputs/mn/quality",
+  "twin_cities_counties": {
+    "02": {"name": "Anoka", "fips": "27003"},
+    "10": {"name": "Carver", "fips": "27019"},
+    "19": {"name": "Dakota", "fips": "27037"},
+    "27": {"name": "Hennepin", "fips": "27053"},
+    "62": {"name": "Ramsey", "fips": "27123"},
+    "70": {"name": "Scott", "fips": "27139"},
+    "82": {"name": "Washington", "fips": "27163"}
+  },
+  "max_member_bytes": 10485760,
+  "max_archive_bytes": 1073741824,
+  "max_members": 100000
+}

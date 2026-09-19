@@ -37,7 +37,7 @@ def parse_xml(raw, allow_cp1252=False):
     if '<!DOCTYPE' in text.upper() or '<!ENTITY' in text.upper():
         raise ValueError('DTD/entity declarations are unsupported')
     root = ET.fromstring(text)
-    if root.tag != 'ecrvForm':
+    if root.tag not in {'ecrvForm', 'us.mn.state.mdor.ecrv.extract.form.EcrvForm'}:
         raise ValueError('unsupported root or namespace')
     return root, encoding
 

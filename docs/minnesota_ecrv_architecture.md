@@ -1,14 +1,14 @@
 # Minnesota weekly eCRV ingestion and Twin Cities price sensitivity
 
-Status: implementation proposal, with a working pre-ingestion audit utility. Reviewed 2026-09-19 against repository commit `3e147ee11cf6dc4389c15cf3822507ea5c96ca11`.
+Status: ingestion foundation implemented and validated against real archives from all observed schema periods on 2026-09-19.
 
 ## Recommendation
 
-Add a separate Minnesota source adapter: immutable ZIP archives → versioned transaction store → Parquet analytical snapshots → county-month CSV/RDS panel for R. Process XML directly inside ZIPs, once per new archive content hash. Preserve revisions and repeated child records; count a sale once regardless of parcel count. Begin with the seven-county Twin Cities planning region, with county identifiers explicitly mapped to Census FIPS.
+Use a separate Minnesota source adapter: immutable ZIP archives → versioned SQLite transaction store → analytical CSVs → county-month CSV/RDS panel for R. Process XML directly inside ZIPs, once per archive content hash and parser version. Preserve revisions and repeated child records; count a sale once regardless of parcel count. Begin with the seven-county Twin Cities planning region, with county identifiers explicitly mapped to Census FIPS.
 
 The eCRV sample supports transaction prices, activity, financing mix and seller-paid-points measures. It cannot by itself establish buyer demand elasticity: completed sales omit unsold listings and do not reveal how buyers respond to asking-price reductions. Add listing data for that question, and describe rate/price/volume associations as descriptive unless an identification strategy supports causal interpretation.
 
-This PR implements the audit and documents the production design. It does not implement the persistent ingestion store, automatic download, monthly panel, or a price-sensitivity model. One archive cannot establish cross-week amendment/deletion behavior or an adequate time series. The next implementation should validate those source behaviors with overlapping weeks and a recent extract before publishing research outputs.
+This PR implements the audit, schema adapters, deterministic malformed-character recovery, persistent version store, archive-level incremental ingestion, quarantine reporting and CSV exports. Automatic download, the monthly panel and a price-sensitivity model remain future work. The observed archives do not establish authoritative amendment/deletion behavior; validate those source rules before publishing research outputs.
 
 ## Repository fit
 
@@ -46,7 +46,9 @@ The requested `/mnt/data` location was absent in this desktop environment. The s
 
 Archive SHA-256: `3cedaa70a0a0781c0939c0f1084ca9314179765ca774e80d2940c87299bc7762`.
 
-The 199 encoding failures all contain invalid UTF-8 bytes despite the XML declaration. Windows-1252 decoding makes them syntactically parseable; that is evidence for a controlled legacy recovery path, not proof that every text character is semantically correct. Keep original bytes, log recovery per member, and never silently replace or discard characters. Strict mode must fail visibly. Schema validation and business validation are additional steps; successful parsing does not establish either.
+The 199 encoding failures all contain invalid UTF-8 bytes despite the XML declaration. Windows-1252 decoding makes them syntactically parseable; that is evidence for a controlled legacy recovery path, not proof that every text character is semantically correct. The pipeline keeps the source ZIP unchanged and logs recovery per member.
+
+Malformed character references and literal XML control characters are repaired only when the transformation is deterministic under XML 1.0. Recovered records enter the analytical store only after their key, sale date, positive price and county consistency checks pass, with `parse_recovered` and `recovery_method` retained. Structural damage, unsupported roots, invalid required values and other ambiguous failures are quarantined with archive, member, error code and hash; no analytical values are imputed. Report recovered and excluded counts with every analysis, and rerun primary results excluding recovered records as a sensitivity check.
 
 The file falls in the Department of Revenue's Schema 3 extract period, beginning November 9, 2020. Weekly extracts contain submitter information for accepted sales, without subsequent county/city-added data. Do not treat their sale-condition flags as an assessor's final arm's-length certification. [Minnesota eCRV documentation](https://www.revenue.state.mn.us/electronic-certificate-real-estate-value-ecrv)
 
@@ -96,17 +98,17 @@ Use the property county, checked against the header, for filtering. Keep statewi
 
 ## Storage and incremental ingestion design
 
-Use an embedded DuckDB database as the single-writer ingestion registry and version store; produce compressed Parquet for analytical interchange and CSV for the current R conventions. This avoids operating a server at this scale. Add DuckDB and PyArrow only when the ingestion/export modules are implemented and tested; the audit requires only Python 3.11+ standard libraries.
+Use Python's built-in SQLite database as the single-writer ingestion registry and version store, and CSV for the current R conventions. This keeps ingestion dependency-free and avoids operating a server at this scale. If CSV performance becomes limiting, add an optional Parquet export without changing raw ingestion or version identity.
 
 ### Tables and grains
 
 * `ingest_batches`: one archive content hash; original filename, byte size, source extract timestamp (with known/unknown timezone), discovered timestamp, parser/schema versions, lifecycle status, record/error counts. Same filename with changed bytes is a new batch.
 * `record_versions`: one `(source_key, raw_member_sha256, parser_version)`; normalized sale fields, schema/recovery flags and canonical analytical-content hash. Use decimal amounts, local dates, string identifiers and nullable Booleans. Preserve parser-version lineage even when reparsing identical raw bytes.
 * `record_observations`: one `(batch_hash, member_ordinal)`; member name, source key, raw-member hash and version reference. This retains repeated appearances without multiplying sales.
-* `transaction_parcels`, `transaction_addresses`, `transaction_uses`, `transaction_financing`, `transaction_personal_property`: child rows keyed by version and ordinal/source child ID. Never join all children to the sale fact in a way that multiplies sale prices or counts.
+* `child_rows`: normalized parcel, address, use, financing and personal-property rows keyed by version, child type and ordinal/source child ID. Each type is exported to its own flat CSV. Never join all children to the sale fact in a way that multiplies sale prices or counts.
 * `current_transactions`: deterministic view over valid versions and observations. One row per source key, retaining a revision-conflict flag. A sale's parcel ID is not its dedup key: a parcel can sell more than once.
 * `quality_events`: batch/member references, machine-readable issue codes and severity; no personal text.
-* `analytical_snapshots`: committed input batches, parser/filter/config versions, snapshot ID, file checksums and publication state.
+* The exported CSVs represent the current latest-observed view. The SQLite tables retain all raw-member versions and observations needed to reproduce or revise that view.
 
 ### Processing sequence
 
@@ -114,29 +116,27 @@ Use an embedded DuckDB database as the single-writer ingestion registry and vers
 2. Stream SHA-256 over the archive and consult the registry. Skip only a successfully committed batch with the same bytes and parser/config version. Size/mtime can optimize discovery but are not identity. Renaming or copying a ZIP must not double-count records.
 3. Stream members with bounded reads. Reject oversized members, excessive total expansion, duplicate member names, unsupported roots, DTD/entities and unexpected member types. Never extract paths to the filesystem. Use strict decoding first; permit the logged Windows-1252 path only under explicit legacy policy.
 4. Validate required key/date/amount fields and known schema shape. Retain nullable optional fields. Check filename identifiers against XML but trust neither without validation. Separate parsing, structural, domain and research-filter errors. Quarantine malformed records and retain provenance for replay.
-5. Stage a whole archive and commit its registry, observations, versions and children in one database transaction. Default publication should require zero unresolved hard errors; a deliberately partial import must remain labeled incomplete. On failure, rollback and leave the batch retryable. Enforce one writer with a lock.
+5. Stage a whole archive and commit its registry, observations, versions and children in one database transaction. Archives with quarantined members are labeled `incomplete`; their validated records remain available for explicitly disclosed partial analysis. On process failure, rollback and leave the batch retryable. SQLite enforces the single-writer design.
 6. Resolve exact repeats by key plus member hash. Compare analytical hashes to distinguish a relevant price/date/property revision from formatting or excluded-party-text changes. Distinct conflicting records for the same key in one batch are errors, not arbitrary keep-last operations.
 7. When no authoritative revision timestamp exists, select the latest *source extract timestamp* as a documented latest-observed policy, not latest ingestion time or ZIP filesystem mtime. Older backfills must never replace later observations. Equal-timestamp conflicting values require adjudication. Retain every version and offer as-of snapshots. Confirm whether the weekly service republishes amendments; this sample does not prove that it does.
 8. Absence from a later weekly ZIP is not deletion. Apply withdrawals only from an explicit, validated status/deletion source. If the service never republishes corrections, arrange a separate reconciliation feed or state that historical corrections remain unavailable.
 9. Rebuild affected sale-date partitions and both old/new county-month cells after revisions, including changed dates, counties or eligibility. Do not limit corrections to the most recent extract week. Maintain a full rebuild command from retained raw ZIPs.
-10. Export to a new immutable snapshot directory, verify checksums/counts, then atomically publish its manifest. Mark exports complete after publication; a crash after database commit must allow export replay without re-ingestion. Readers load only the active manifest, never a half-written directory.
+10. Export the latest-observed transactions, normalized child rows and quality summaries from SQLite. Export can be rerun after a crash without re-ingestion. Add immutable snapshot manifests before using the output for a published analysis.
 
 Suggested layout:
 
 ```text
 data/raw/mn/ecrv/<original archives>
-data/intermediate/mn/ecrv.duckdb
-data/processed/mn/snapshots/<snapshot_id>/transactions/sale_year=2020/*.parquet
-data/processed/mn/snapshots/<snapshot_id>/parcels/*.parquet
-data/processed/mn/current_snapshot.json
+data/intermediate/mn/ecrv.sqlite
 data/processed/mn/ecrv_transactions.csv
+data/processed/mn/ecrv_children.csv
 data/processed/mn/panel_county_month.csv
 data/processed/mn/panel_county_month.rds
 outputs/mn/quality/
 outputs/mn/figures/
 ```
 
-Prefer yearly Parquet partitions initially; weekly/county/ZIP partitions would create many tiny files. Use county/date predicates within each yearly partition and compact after batches. Preserve out-of-window historical records in the canonical store, even if an analytical view selects 2021–2025. A constant-rate extrapolation of this one sample is about 0.72 GB uncompressed XML per 52 archives, which is a sizing illustration, not a forecast of actual weekly volume. Benchmark first; start serially, then use bounded archive parsing workers feeding one writer if needed. Spark, a queue service and a hosted database are unnecessary starting requirements.
+Preserve out-of-window historical records in the canonical store, even if an analytical view selects a narrower study period. A constant-rate extrapolation of this one sample is about 0.72 GB uncompressed XML per 52 archives, which is a sizing illustration, not a forecast of actual weekly volume. The implementation starts serially with bounded member reads and one transactional SQLite writer. Add bounded parsing workers only if a full-backfill benchmark justifies them.
 
 ## Research eligibility and metrics
 
@@ -175,28 +175,31 @@ To test actual buyer price sensitivity, obtain listing-level price histories and
 | `docs/minnesota_ecrv_architecture.md` | **Implemented:** this design and measured sample findings |
 | `README.md` | **Implemented:** link and runnable audit command |
 | `.gitignore` | **Implemented:** Minnesota raw/intermediate/processed/quality outputs and Python caches |
-| `config/mn_ecrv.json` | **Proposed:** input/output locations, geographic crosswalk, schema periods, filters, study window and frozen segment definitions |
-| `scripts/mn_ecrv/schema.py` | **Proposed:** typed normalized fields, schema adapters, XSD validation and safe encoding policy |
-| `scripts/mn_ecrv/store.py` | **Proposed:** registry, transactional staging, observations/versions/children, latest/as-of resolution |
-| `scripts/mn_ecrv/export.py` | **Proposed:** Parquet snapshots, CSV compatibility and atomic manifests |
-| `scripts/00_mn_ecrv_pipeline.py` | **Proposed:** folder CLI with ingest, validate, rebuild and export subcommands |
+| `config/mn_ecrv.json` | **Implemented:** paths, bounded-read limits and seven-county crosswalk |
+| `scripts/mn_ecrv/schema.py` | **Implemented:** four observed schema variants, normalized fields and deterministic recovery |
+| `scripts/mn_ecrv/store.py` | **Implemented:** SQLite registry, transactional batches, observations, versions, children and latest-observed resolution |
+| `scripts/00_mn_ecrv_pipeline.py` | **Implemented:** recursive folder ingestion, year/archive selection, replay skipping and CSV export |
 | `scripts/01_mn_panel.R` | **Proposed:** Minnesota-specific monthly panel with keyed Redfin/ACS/FRED joins |
 | `scripts/02_mn_price_sensitivity.R` | **Proposed:** descriptive metrics and explicitly identified models when data permits |
-| `requirements.txt` | **Proposed:** tested DuckDB/PyArrow/XML-validation dependencies; no change needed for audit |
-| `tests/test_mn_ecrv_ingestion.py` | **Proposed:** replay, rename, changed same-name ZIP, overlapping archives, amendments, out-of-order backfill, child fanout, rollback, partition corrections and schema drift |
+| `requirements.txt` | **Implemented:** no new ingestion dependency; Python standard library only |
+| `tests/test_mn_ecrv_ingestion.py` | **Implemented:** modern/legacy adapters, child unwrapping, recovery, required validation and party-data exclusion |
 
 First collect adjacent overlapping weekly extracts plus a recent archive and the source's amendment/withdrawal documentation. Then implement the canonical store and verify replay/revision cases. Backfill the desired study years and inspect completeness before building the R panel. Automate a scheduled folder scan only after initial backfill reconciliation; acquiring files from the source virtual room is a separate concern from processing files already on disk.
 
-### Run the implemented audit
+### Run ingestion and audit
 
 ```bash
-# Python 3.11+; no third-party packages required
+# Python 3.11+; no third-party ingestion packages required
+python3 scripts/00_mn_ecrv_pipeline.py all
+python3 scripts/00_mn_ecrv_pipeline.py ingest --year 2015 --year 2016
+python3 scripts/00_mn_ecrv_pipeline.py export
+
 python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --output outputs/mn/quality/strict.json
 
 # Explicit legacy recovery, justified by this sample's encoding diagnostics
 python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --allow-cp1252 --output outputs/mn/quality/recovered.json
 
-python3 -m unittest discover -s tests -p 'test_audit_mn_ecrv.py' -v
+python3 -m unittest discover -s tests -v
 ```
 
-The audit returns nonzero for unresolved member errors, duplicate keys/names or county mismatches, while saving its report. Reports are per archive: the utility does not deduplicate across archives, validate XSD, certify sale eligibility or write transaction datasets. Missing field counts are distinct from empty values; reported presence counts do not validate numeric contents. For the inspected sample, strict mode returns failure for 199 members; explicit recovery returns success for all 2,260. Ten synthetic tests pass.
+The audit returns nonzero for unresolved member errors, duplicate keys/names or county mismatches, while saving its report. Reports are per archive: the utility does not deduplicate across archives, validate XSD, certify sale eligibility or write transaction datasets. Missing field counts are distinct from empty values; reported presence counts do not validate numeric contents. For the inspected sample, strict mode returns failure for 199 members; explicit recovery returns success for all 2,260. The ingestion and audit suites contain 19 synthetic tests.
