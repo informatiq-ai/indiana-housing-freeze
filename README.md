@@ -146,3 +146,17 @@ All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Pat
 - Redfin, county market tracker public data
 - U.S. Census Bureau, American Community Survey 2023 5-year estimates
 - Federal Reserve Bank of St. Louis (FRED), MORTGAGE30US series
+
+
+## Minnesota eCRV extension (design and audit)
+
+See [Minnesota ingestion architecture](docs/minnesota_ecrv_architecture.md) for the inspected weekly ZIP findings, source mapping, incremental storage design, Twin Cities geography and price-sensitivity research plan. Production ingestion and analysis remain proposed; the pre-ingestion audit is implemented.
+
+```bash
+# Python 3.11+; audit one ZIP or recursively scan a folder
+python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --output outputs/mn/quality/strict.json
+# Explicit recovery for legacy files containing Windows-1252 bytes
+python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --allow-cp1252 --output outputs/mn/quality/recovered.json
+python3 -m unittest discover -s tests -p 'test_audit_mn_ecrv.py' -v
+```
+
