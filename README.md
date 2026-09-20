@@ -87,6 +87,8 @@ The app provides three switchable views via radio button:
 
 **`scripts/00_data_pipeline.py`** processes STATS Indiana SDF deed records. It loads SALEDISC files for 2021–2025, applies all arm's-length and quality filters, assigns price segments via k-means, joins SALEPARCEL zip codes, joins ZCTA-level HHI, and computes zip-level affordability ratios. Outputs: `data/processed/sdf_indiana.csv` and `data/processed/zip_median_prices.csv`.
 
+**`scripts/00_indiana_sdf_pipeline.py`** builds a separate audited Indiana transaction history from legacy annual pipe-delimited files (`2015.txt` through `2020.txt`) and modern `SALEDISC`/`SALEPARCEL` pairs. Format detection is header-based, so later modern years are discovered automatically. It writes `data/processed/indiana_sdf_history.csv` plus a county-year filter funnel, quality events, and a hashed input manifest under `outputs/indiana/quality/`. It does not replace `sdf_indiana.csv` or run Redfin, Census, tiering, or modeling steps.
+
 **`scripts/01_data_pipeline.R`** builds the county-month panel used in all regression models. It joins Redfin listing data, Census county demographics, ZCTA HHI, and FRED mortgage rates. Computed variables include `rate_gap`, `affordability_ratio`, DiD indicators (`post`, `treated`, `did`), and per-capita transaction counts by segment. Outputs: `data/processed/panel_data.rds` and `data/processed/panel_data.csv`. Requires `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron`.
 
 **`scripts/02_eda_descriptive_stats.R`** produces Figures 1 through 10 and Table 1. It loads `panel_data.rds` and `sdf_indiana.csv` and generates descriptive statistics, time series plots, the parallel trends check, price index by segment, affordability ratios, and DOM distributions.
@@ -139,6 +141,23 @@ Days-on-market figures from Redfin are subject to delist-relist cycling and repr
 ## Reproducibility
 
 All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Path` anchored to the repository root. Set `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron` before running `01_data_pipeline.R`. The `00_data_pipeline.py` script requires STATS Indiana SDF flat files (`SALEDISC20XX.txt` and `SALEPARCEL20XX.txt`) placed in the repository root; these files are not redistributed here.
+
+Build the normalized Indiana history independently of the existing analysis pipeline:
+
+```bash
+python scripts/00_indiana_sdf_pipeline.py \
+  --input-dir . \
+  --output data/processed/indiana_sdf_history.csv \
+  --quality-dir outputs/indiana/quality
+
+# Optional inclusive range or repeated individual years
+python scripts/00_indiana_sdf_pipeline.py --year 2015:2020
+```
+
+The history retains records that fail research filters and exposes both
+`eligible_current_study` and `eligible_strict_comparable` with machine-readable
+exclusion reasons. Gross sale price remains the canonical price; cross-era
+personal-property and seller-concession adjustments are intentionally deferred.
 
 ## Data Sources
 

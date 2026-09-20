@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Ingestion Audit"
+  short_description: "Audit Indiana and Minnesota housing ingestion"
+  default_prompt: "Use $housing-ingestion-audit to validate the selected state ingestion pipeline and report reconciliation results."

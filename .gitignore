@@ -16,6 +16,12 @@ outputs/mobile_previews/
 # STATS Indiana raw SDF flat files — large (100–300 MB each), not redistributed
 SALEDISC*.txt
 SALEPARCEL*.txt
+# Legacy annual STATS Indiana extracts (for example, 2015.txt)
+[12][0-9][0-9][0-9].txt
+
+# Generated Indiana longitudinal ingestion outputs
+data/processed/indiana_sdf_history.csv
+outputs/indiana/quality/
 
 
 # Stray R graphics device output
@@ -30,4 +36,3 @@ outputs/mn/quality/
 # Python caches
 __pycache__/
 *.py[cod]
-

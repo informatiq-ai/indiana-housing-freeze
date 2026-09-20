@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Panel Builder"
+  short_description: "Build the unified two-metro housing panel"
+  default_prompt: "Use $housing-panel-builder to design or build the harmonized Indiana-Minnesota panel."

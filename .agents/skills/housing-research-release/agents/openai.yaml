@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Research Release"
+  short_description: "Validate housing research before publication"
+  default_prompt: "Use $housing-research-release to validate the analysis artifacts and claims before release."
