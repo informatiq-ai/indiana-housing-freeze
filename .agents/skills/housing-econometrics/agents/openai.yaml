@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Econometrics"
+  short_description: "Specify and review housing econometric models"
+  default_prompt: "Use $housing-econometrics to specify or review the housing panel research design and models."
