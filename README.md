@@ -146,3 +146,23 @@ All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Pat
 - Redfin, county market tracker public data
 - U.S. Census Bureau, American Community Survey 2023 5-year estimates
 - Federal Reserve Bank of St. Louis (FRED), MORTGAGE30US series
+
+
+## Minnesota eCRV extension
+
+See [Minnesota ingestion architecture](docs/minnesota_ecrv_architecture.md) for the weekly ZIP findings, schema mapping, malformed-record policy, Twin Cities geography and price-sensitivity research plan. The ingestion pipeline reads XML directly from ZIPs, records processed archive hashes in a local SQLite database, retains transaction versions and child rows, and exports analysis-ready CSV files. Raw archives and generated data remain excluded from Git.
+
+```bash
+# Incrementally process every ZIP under data/raw/mn/ecrv and export CSVs
+python3 scripts/00_mn_ecrv_pipeline.py all
+
+# Process selected years; reruns skip archives already committed
+python3 scripts/00_mn_ecrv_pipeline.py ingest --year 2015 --year 2016
+python3 scripts/00_mn_ecrv_pipeline.py export
+
+# Python 3.11+; audit one ZIP or recursively scan a folder
+python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --output outputs/mn/quality/strict.json
+# Explicit recovery for legacy files containing Windows-1252 bytes
+python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --allow-cp1252 --output outputs/mn/quality/recovered.json
+python3 -m unittest discover -s tests -v
+```

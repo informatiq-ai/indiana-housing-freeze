@@ -20,3 +20,14 @@ SALEPARCEL*.txt
 
 # Stray R graphics device output
 Rplots.pdf
+
+# Minnesota source archives and generated local datasets
+data/raw/mn/
+data/intermediate/mn/
+data/processed/mn/
+outputs/mn/quality/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
