@@ -70,7 +70,7 @@ making the methodological change explicit and updating the audit/tests.
 
 - Treat all raw SDF and eCRV files as immutable. Do not rename, move, delete, or
   commit them without explicit user direction.
-- Root-level `YYYY.txt` files are legacy Indiana extracts: pipe-delimited,
+- `data/raw/in/YYYY.txt` files are legacy Indiana extracts: pipe-delimited,
   Windows-1252-compatible, with sale prices already in dollars.
 - `SALEDISCYYYY.txt` and `SALEPARCELYYYY.txt` are modern Indiana extracts:
   UTF-16 tab-delimited, with transaction monetary values stored in cents.
@@ -92,7 +92,7 @@ Use the repository virtual environment when it exists:
 .venv/bin/python -m unittest discover -s tests -v
 
 .venv/bin/python scripts/00_indiana_sdf_pipeline.py \
-  --input-dir . \
+  --input-dir data/raw/in \
   --output data/processed/indiana_sdf_history.csv \
   --quality-dir outputs/indiana/quality
 

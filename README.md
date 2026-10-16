@@ -140,13 +140,13 @@ Days-on-market figures from Redfin are subject to delist-relist cycling and repr
 
 ## Reproducibility
 
-All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Path` anchored to the repository root. Set `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron` before running `01_data_pipeline.R`. The `00_data_pipeline.py` script requires STATS Indiana SDF flat files (`SALEDISC20XX.txt` and `SALEPARCEL20XX.txt`) placed in the repository root; these files are not redistributed here.
+All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Path` anchored to the repository root. Set `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron` before running `01_data_pipeline.R`. The `00_data_pipeline.py` script requires STATS Indiana SDF flat files (`SALEDISC20XX.txt` and `SALEPARCEL20XX.txt`, plus legacy `2015.txt` through `2020.txt`) placed in `data/raw/in/`; these files are not redistributed here.
 
 Build the normalized Indiana history independently of the existing analysis pipeline:
 
 ```bash
 python scripts/00_indiana_sdf_pipeline.py \
-  --input-dir . \
+  --input-dir data/raw/in \
   --output data/processed/indiana_sdf_history.csv \
   --quality-dir outputs/indiana/quality
 

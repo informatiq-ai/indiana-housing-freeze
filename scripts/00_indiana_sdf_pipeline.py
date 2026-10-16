@@ -28,7 +28,7 @@ def parse_years(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-dir", type=Path, default=Path("."))
+    parser.add_argument("--input-dir", type=Path, default=Path("data/raw/in"))
     parser.add_argument("--output", type=Path,
                         default=Path("data/processed/indiana_sdf_history.csv"))
     parser.add_argument("--quality-dir", type=Path,

@@ -66,7 +66,7 @@ HHI_ZCTA_CACHE  = str(ROOT / "data/processed/hhi_zcta.csv")
 TARGET_COUNTIES = {"MARION", "HAMILTON", "BOONE", "HENDRICKS", "JOHNSON"}
 
 YEARS     = [2021, 2022, 2023, 2024, 2025]
-INPUT_DIR = str(ROOT)
+INPUT_DIR = str(ROOT / "data/raw/in")
 OUTPUT_FILE = str(ROOT / "data/processed/sdf_indiana.csv")
 
 KEEP_COLS = [
