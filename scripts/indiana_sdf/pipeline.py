@@ -68,6 +68,7 @@ OUTPUT_COLUMNS = [
     "industrial_property", "vacant_land", "trade", "related_party",
     "land_contract", "partial_interest", "charity_transfer", "sheriff_sale",
     "short_sale", "quitclaim", "all_parcels_improved_residential",
+    "all_parcels_single_family", "source_status_conflict",
     "eligible_current_study", "eligible_strict_comparable",
     "exclusion_reasons_current", "exclusion_reasons_strict",
 ]
@@ -81,6 +82,11 @@ COMPARISON_COLUMNS = [column for column in OUTPUT_COLUMNS if column not in {
     "eligible_strict_comparable", "exclusion_reasons_current",
     "exclusion_reasons_strict",
 }]
+STATUS_COLUMNS = ["validation_complete", "valid_for_trending"]
+CORE_COMPARISON_COLUMNS = [
+    column for column in COMPARISON_COLUMNS
+    if column not in {*STATUS_COLUMNS, "source_status_conflict"}
+]
 
 QUALITY_COLUMNS = [
     "source_year", "source_format", "source_file", "county", "source_key",
@@ -186,6 +192,11 @@ def _is_improved_class(value: str) -> bool:
     return bool(re.fullmatch(r"5[1-9][0-9]", value))
 
 
+def _is_single_family_class(value: str) -> bool:
+    """Return whether an Indiana parcel class is a one-family dwelling."""
+    return bool(re.fullmatch(r"51[0-5]", value))
+
+
 def _county_columns(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     result["county_dlgf_code"] = result["County_ID"].astype("string").str.strip().str.zfill(2)
@@ -228,6 +239,10 @@ def normalize_legacy_frame(frame: pd.DataFrame, year: int, source_file: str) -> 
     result["all_parcels_improved_residential"] = classes.map(
         lambda value: _is_improved_class(value) if pd.notna(value) else False
     ).astype("boolean")
+    result["all_parcels_single_family"] = classes.map(
+        lambda value: _is_single_family_class(value) if pd.notna(value) else False
+    ).astype("boolean")
+    result["source_status_conflict"] = False
     result["dom_reported"] = pd.Series(pd.NA, index=result.index, dtype="Int64")
     result["validation_complete"] = _flag(result["P2_17_Validation_Complete"])
     result["valid_for_trending"] = _flag(result["P2_16_Valid_Trending"])
@@ -256,7 +271,8 @@ def _aggregate_parcels(parcels: pd.DataFrame) -> pd.DataFrame:
     parcels = parcels.sort_values(["SDF_ID", "_instance"], na_position="last")
     if parcels.empty:
         return pd.DataFrame(columns=["SDF_ID", "property_zip", "parcel_count",
-                                     "property_class_codes", "all_parcels_improved_residential"])
+                                     "property_class_codes", "all_parcels_improved_residential",
+                                     "all_parcels_single_family"])
     grouped = parcels.groupby("SDF_ID", sort=False, dropna=False)
     summary = pd.DataFrame({
         "parcel_count": grouped.size(),
@@ -271,6 +287,7 @@ def _aggregate_parcels(parcels: pd.DataFrame) -> pd.DataFrame:
     if unique_classes.empty:
         summary["property_class_codes"] = None
         summary["all_parcels_improved_residential"] = False
+        summary["all_parcels_single_family"] = False
     else:
         class_groups = unique_classes.groupby("SDF_ID", sort=False)["_class"]
         summary["property_class_codes"] = class_groups.agg(";".join)
@@ -281,6 +298,12 @@ def _aggregate_parcels(parcels: pd.DataFrame) -> pd.DataFrame:
         summary["all_parcels_improved_residential"] = summary[
             "all_parcels_improved_residential"
         ].fillna(False)
+        unique_classes["_single_family"] = unique_classes["_class"].map(
+            _is_single_family_class
+        )
+        summary["all_parcels_single_family"] = unique_classes.groupby(
+            "SDF_ID", sort=False
+        )["_single_family"].all().fillna(False)
     return summary.reset_index()
 
 
@@ -295,6 +318,10 @@ def normalize_modern_frames(sales: pd.DataFrame, parcels: pd.DataFrame, year: in
     result["all_parcels_improved_residential"] = result[
         "all_parcels_improved_residential"
     ].fillna(False).astype("boolean")
+    result["all_parcels_single_family"] = result[
+        "all_parcels_single_family"
+    ].fillna(False).astype("boolean")
+    result["source_status_conflict"] = False
     result["dom_reported"] = pd.to_numeric(_optional(result, "C8_Market_Days"), errors="coerce").astype("Int64")
     result["validation_complete"] = _flag(result["P2_17_Validation_Complete"])
     result["valid_for_trending"] = _flag(result["P2_16_Valid_Trending"])
@@ -376,8 +403,14 @@ def _event(row: pd.Series | None, issue_code: str, severity: str,
 
 
 def deduplicate_records(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Remove invalid keys, collapse exact repeats, and quarantine conflicts."""
-    working = frame.copy()
+    """Collapse harmless repeats while quarantining substantive conflicts.
+
+    Modern county exports can repeat a transaction while assessor validation
+    and trending flags progress. When every other analytical value agrees, keep
+    one transaction, null the disagreeing status fields, and record the status
+    conflict. No ordering in the flat file is treated as revision authority.
+    """
+    working = frame.reset_index(drop=True).copy()
     events = []
     dispositions = []
     invalid = working["source_key"].isna()
@@ -386,7 +419,9 @@ def deduplicate_records(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
                              "Missing or malformed SDF_ID"))
         dispositions.append({"source_year": row["source_year"], "source_format": row["source_format"],
                              "county": row["county"], "invalid_key_rows": 1,
-                             "exact_duplicate_rows_removed": 0, "conflicting_rows_quarantined": 0})
+                             "exact_duplicate_rows_removed": 0,
+                             "status_variant_rows_removed": 0,
+                             "conflicting_rows_quarantined": 0})
     working = working[~invalid].copy()
 
     duplicate_mask = working["source_key"].duplicated(keep=False)
@@ -395,9 +430,23 @@ def deduplicate_records(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     if not duplicates.empty:
         comparison = duplicates[["source_key"] + COMPARISON_COLUMNS].astype("string").fillna("<NA>")
         distinct_counts = comparison.drop_duplicates().groupby("source_key", sort=False).size()
+        core_comparison = duplicates[["source_key"] + CORE_COMPARISON_COLUMNS].astype(
+            "string"
+        ).fillna("<NA>")
+        core_distinct_counts = core_comparison.drop_duplicates().groupby(
+            "source_key", sort=False
+        ).size()
         exact_keys = set(distinct_counts[distinct_counts == 1].index)
+        status_variant_keys = set(
+            core_distinct_counts[(core_distinct_counts == 1) & (distinct_counts > 1)].index
+        )
         exact = duplicates[duplicates["source_key"].isin(exact_keys)].copy()
-        conflicts = duplicates[~duplicates["source_key"].isin(exact_keys)].copy()
+        status_variants = duplicates[
+            duplicates["source_key"].isin(status_variant_keys)
+        ].copy()
+        conflicts = duplicates[
+            ~duplicates["source_key"].isin(exact_keys | status_variant_keys)
+        ].copy()
 
         if not exact.empty:
             exact["_preferred"] = exact["sale_year"] == exact["source_year"]
@@ -415,7 +464,39 @@ def deduplicate_records(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             for _, row in removed.iterrows():
                 dispositions.append({"source_year": row["source_year"], "source_format": row["source_format"],
                                      "county": row["county"], "invalid_key_rows": 0,
-                                     "exact_duplicate_rows_removed": 1, "conflicting_rows_quarantined": 0})
+                                     "exact_duplicate_rows_removed": 1,
+                                     "status_variant_rows_removed": 0,
+                                     "conflicting_rows_quarantined": 0})
+
+        if not status_variants.empty:
+            for source_key, group in status_variants.groupby("source_key", sort=False):
+                preferred = group.assign(
+                    _preferred=group["sale_year"] == group["source_year"]
+                ).sort_values(
+                    ["_preferred", "source_year"], na_position="first"
+                )
+                selected_index = preferred.index[-1]
+                keep_indices.append(selected_index)
+                working.at[selected_index, "source_status_conflict"] = True
+                for column in STATUS_COLUMNS:
+                    if group[column].astype("string").fillna("<NA>").nunique() > 1:
+                        working.at[selected_index, column] = pd.NA
+                events.append(_event(
+                    working.loc[selected_index], "status_variant_collapsed", "warning",
+                    len(group) - 1,
+                    "Duplicate SDF_ID differed only in validation/trending status; "
+                    "disagreeing statuses set to unknown",
+                ))
+                for _, row in group.drop(index=selected_index).iterrows():
+                    dispositions.append({
+                        "source_year": row["source_year"],
+                        "source_format": row["source_format"],
+                        "county": row["county"],
+                        "invalid_key_rows": 0,
+                        "exact_duplicate_rows_removed": 0,
+                        "status_variant_rows_removed": 1,
+                        "conflicting_rows_quarantined": 0,
+                    })
 
         if not conflicts.empty:
             counts = conflicts.groupby("source_key", sort=False).size()
@@ -427,7 +508,9 @@ def deduplicate_records(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             for _, row in conflicts.iterrows():
                 dispositions.append({"source_year": row["source_year"], "source_format": row["source_format"],
                                      "county": row["county"], "invalid_key_rows": 0,
-                                     "exact_duplicate_rows_removed": 0, "conflicting_rows_quarantined": 1})
+                                     "exact_duplicate_rows_removed": 0,
+                                     "status_variant_rows_removed": 0,
+                                     "conflicting_rows_quarantined": 1})
     result = working.loc[keep_indices].copy() if keep_indices else working.iloc[0:0].copy()
     return result, pd.DataFrame(events, columns=QUALITY_COLUMNS), pd.DataFrame(dispositions)
 
@@ -465,6 +548,8 @@ def _reason_strings(frame: pd.DataFrame, strict: bool) -> pd.Series:
     add(modern & (frame["short_sale"] != False), "short_sale_or_unknown")  # noqa: E712
     add(modern & (frame["quitclaim"] != False), "quitclaim_or_unknown")  # noqa: E712
     if strict:
+        add(modern & (frame["source_status_conflict"] == True),  # noqa: E712
+            "source_status_conflict")
         add(modern & (frame["validation_complete"] != True), "validation_incomplete")  # noqa: E712
         add(modern & (frame["valid_for_trending"] != True), "not_valid_for_trending")  # noqa: E712
         add(modern & (frame["parcel_count"].isna() | (frame["parcel_count"] <= 0)), "missing_parcel")
@@ -515,10 +600,12 @@ def _build_funnel(raw: pd.DataFrame, normalized: pd.DataFrame,
     ).reset_index()
     if dispositions.empty:
         disposition_counts = pd.DataFrame(columns=keys + ["invalid_key_rows",
-            "exact_duplicate_rows_removed", "conflicting_rows_quarantined"])
+            "exact_duplicate_rows_removed", "status_variant_rows_removed",
+            "conflicting_rows_quarantined"])
     else:
         disposition_counts = dispositions.groupby(keys, dropna=False)[
-            ["invalid_key_rows", "exact_duplicate_rows_removed", "conflicting_rows_quarantined"]
+            ["invalid_key_rows", "exact_duplicate_rows_removed", "status_variant_rows_removed",
+             "conflicting_rows_quarantined"]
         ].sum().reset_index()
     funnel = raw_counts.merge(disposition_counts, on=keys, how="left").merge(
         normalized_counts, on=keys, how="left"
@@ -533,6 +620,7 @@ def _build_funnel(raw: pd.DataFrame, normalized: pd.DataFrame,
     )
     reconciled = (
         funnel["invalid_key_rows"] + funnel["exact_duplicate_rows_removed"]
+        + funnel["status_variant_rows_removed"]
         + funnel["conflicting_rows_quarantined"] + funnel["normalized_rows"]
     )
     if not reconciled.equals(funnel["raw_target_rows"]):
@@ -592,6 +680,7 @@ def run_pipeline(input_dir: Path, output: Path, quality_dir: Path,
     dispositions = (pd.concat(disposition_frames, ignore_index=True) if disposition_frames else
                     pd.DataFrame(columns=["source_year", "source_format", "county",
                                           "invalid_key_rows", "exact_duplicate_rows_removed",
+                                          "status_variant_rows_removed",
                                           "conflicting_rows_quarantined"]))
 
     missing_parcel = normalized[

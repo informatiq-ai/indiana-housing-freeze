@@ -16,7 +16,7 @@ SALEPARCEL files are used to join ZIP codes to deed records. When a parcel appea
 
 ## Redfin County Market Tracker
 
-Redfin publishes a public county-level market tracker updated monthly. The file is downloaded directly by `scripts/00_data_pipeline.py` from Redfin's data download portal and cached locally at `data/processed/redfin_indiana.csv` to avoid repeated downloads. The tracker supplies monthly aggregated metrics at the county level: median sale price, median days on market, sale-to-list ratio, months of supply, share of homes sold above list price, and share with price drops. Only the five study counties and the period January 2021 through December 2025 are retained. Days-on-market figures from Redfin are subject to delist-relist cycling and represent a lower bound on true time-to-sale.
+Redfin publishes a public county-level market tracker updated monthly. The file is downloaded directly by `scripts/00_data_pipeline.py` from Redfin's data download portal and cached locally at `data/processed/redfin_indiana.csv` to avoid repeated downloads. The tracker supplies monthly aggregated metrics at the county level: median sale price, median days on market, sale-to-list ratio, months of supply, share of homes sold above list price, and share with price drops. The five study counties and January 2015 through December 2025 are retained. Redfin DOM is reported listing duration rather than verified property-level cumulative marketing time; relisting can create measurement error whose direction is not assumed. See [`dom_measurement_research.md`](dom_measurement_research.md).
 
 ## U.S. Census Bureau American Community Survey (ACS)
 

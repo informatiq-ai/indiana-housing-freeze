@@ -11,6 +11,12 @@ Inspect the actual panel contract, sample window, and treatment/tier definitions
 Do not inherit a narrative estimand from existing prose when the implemented
 formula or available variation differs.
 
+For longitudinal release-candidate work, also read
+[`docs/analysis_protocol.md`](../../../docs/analysis_protocol.md). Treat it as
+prospective study governance, not proof that its specifications are already
+implemented. When a substantive modeling choice changes, record the rationale
+and consequences in [`docs/decision_log.md`](../../../docs/decision_log.md).
+
 ## Workflow
 
 - Write the outcome, estimand, comparison groups, treatment timing/exposure, and
@@ -29,6 +35,12 @@ formula or available variation differs.
   qualify inference.
 - Run cohort, price-bound, lag, recovered-record, property-type, metro-specific,
   and composition sensitivities that materially affect the estimand.
+- Classify analyses as pre-specified or exploratory. Preserve the original
+  protocol choice and log deviations instead of silently rewriting it after
+  seeing results.
+- For nonlinear count models, interpret planned contrasts, incidence-rate
+  ratios, or predicted counts. Do not present one interaction coefficient alone
+  as the complete effect.
 
 Every reported percentage must identify its coefficient transformation and
 units. Separate statistically estimated effects from scenario calculations and

@@ -15,6 +15,7 @@ from indiana_sdf.pipeline import (
     normalize_modern_frames,
     normalize_zip,
 )
+from indiana_sdf.established_bridge import load_legacy_backfill
 
 
 def legacy_row(**overrides):
@@ -56,6 +57,48 @@ def modern_parcel(instance="1", zip_code="46202", property_class="510"):
 
 
 class IndianaSdfTests(unittest.TestCase):
+    def test_legacy_bridge_preserves_contract_and_excludes_bad_zip(self):
+        rows = [
+            {
+                "source_format": "legacy_pipe_v1", "source_year": 2015,
+                "sdf_id": "49-2015-1", "county": "Marion",
+                "sale_date": "2015-06-01", "sale_year": 2015,
+                "sale_month": "2015-06", "gross_sale_price": 175000,
+                "property_zip": "46202", "dom_reported": pd.NA,
+                "eligible_current_study": True,
+            },
+            {
+                "source_format": "legacy_pipe_v1", "source_year": 2015,
+                "sdf_id": "49-2015-2", "county": "Marion",
+                "sale_date": "2015-07-01", "sale_year": 2015,
+                "sale_month": "2015-07", "gross_sale_price": 180000,
+                "property_zip": pd.NA, "dom_reported": pd.NA,
+                "eligible_current_study": True,
+            },
+            {
+                "source_format": "modern_multifile_v1", "source_year": 2021,
+                "sdf_id": "C49-2021-1", "county": "Marion",
+                "sale_date": "2021-01-01", "sale_year": 2021,
+                "sale_month": "2021-01", "gross_sale_price": 200000,
+                "property_zip": "46202", "dom_reported": 3,
+                "eligible_current_study": True,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "history.csv"
+            pd.DataFrame(rows).to_csv(path, index=False)
+            result, audit = load_legacy_backfill(path)
+
+        self.assertEqual(list(result.columns), [
+            "SDF_ID", "county", "year", "month", "sale_date", "sale_price",
+            "dom_reported", "data_year", "zip_code",
+        ])
+        self.assertEqual(result.iloc[0]["SDF_ID"], "49-2015-1")
+        self.assertEqual(result.iloc[0]["month"], 6)
+        self.assertEqual(audit["eligible_legacy_rows"], 2)
+        self.assertEqual(audit["legacy_rows_with_valid_zip"], 1)
+        self.assertEqual(audit["legacy_rows_excluded_for_zip"], 1)
+
     def test_zip_normalization(self):
         self.assertEqual(normalize_zip("46202-0001"), "46202")
         self.assertEqual(normalize_zip("602.0"), "00602")
@@ -92,8 +135,20 @@ class IndianaSdfTests(unittest.TestCase):
         self.assertEqual(result["gross_sale_price"], 250000)
         self.assertEqual(result["parcel_count"], 2)
         self.assertEqual(result["property_class_codes"], "510;511")
+        self.assertTrue(result["all_parcels_single_family"])
         self.assertTrue(result["eligible_current_study"])
         self.assertTrue(result["eligible_strict_comparable"])
+
+    def test_non_single_family_residential_is_identified(self):
+        frame = normalize_modern_frames(
+            pd.DataFrame([modern_sale()]),
+            pd.DataFrame([modern_parcel(property_class="520")]),
+            2021, "SALEDISC2021.txt",
+        )
+        result = apply_eligibility(frame).iloc[0]
+        self.assertTrue(result["eligible_current_study"])
+        self.assertTrue(result["eligible_strict_comparable"])
+        self.assertFalse(result["all_parcels_single_family"])
 
     def test_modern_mixed_use_passes_neither_policy(self):
         sale = modern_sale(C10_Agricultural_Property="Y")
@@ -128,6 +183,47 @@ class IndianaSdfTests(unittest.TestCase):
         self.assertTrue(deduplicated.empty)
         self.assertEqual(events.iloc[0]["issue_code"], "conflicting_duplicate_quarantined")
         self.assertEqual(dispositions["conflicting_rows_quarantined"].sum(), 2)
+
+    def test_status_variants_collapse_without_claiming_status_authority(self):
+        frame = normalize_modern_frames(
+            pd.DataFrame([
+                modern_sale(P2_16_Valid_Trending="N", P2_17_Validation_Complete="N"),
+                modern_sale(P2_16_Valid_Trending="Y", P2_17_Validation_Complete="Y"),
+            ]),
+            pd.DataFrame([modern_parcel()]),
+            2021,
+            "SALEDISC2021.txt",
+        )
+        deduplicated, events, dispositions = deduplicate_records(frame)
+        self.assertEqual(len(deduplicated), 1)
+        self.assertTrue(deduplicated.iloc[0]["source_status_conflict"])
+        self.assertTrue(pd.isna(deduplicated.iloc[0]["validation_complete"]))
+        self.assertTrue(pd.isna(deduplicated.iloc[0]["valid_for_trending"]))
+        self.assertEqual(events.iloc[0]["issue_code"], "status_variant_collapsed")
+        self.assertEqual(dispositions["status_variant_rows_removed"].sum(), 1)
+
+        eligible = apply_eligibility(deduplicated).iloc[0]
+        self.assertTrue(eligible["eligible_current_study"])
+        self.assertFalse(eligible["eligible_strict_comparable"])
+        self.assertIn("source_status_conflict", eligible["exclusion_reasons_strict"])
+
+    def test_cross_year_status_variant_prefers_matching_sale_year(self):
+        earlier = normalize_modern_frames(
+            pd.DataFrame([modern_sale(
+                C7_Conveyance_Date="2022-03-17", P2_16_Valid_Trending="N"
+            )]),
+            pd.DataFrame([modern_parcel()]), 2021, "SALEDISC2021.txt",
+        )
+        matching = normalize_modern_frames(
+            pd.DataFrame([modern_sale(
+                C7_Conveyance_Date="2022-03-17", P2_16_Valid_Trending="Y"
+            )]),
+            pd.DataFrame([modern_parcel()]), 2022, "SALEDISC2022.txt",
+        )
+        result, _, _ = deduplicate_records(pd.concat([earlier, matching]))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.iloc[0]["source_year"], 2022)
+        self.assertTrue(result.iloc[0]["source_status_conflict"])
 
     def test_invalid_key_is_quarantined(self):
         frame = normalize_legacy_frame(pd.DataFrame([

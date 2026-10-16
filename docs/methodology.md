@@ -1,22 +1,43 @@
 # Methodology
 
-This document describes the identification strategy, data construction, model specifications, and statistical tests used to examine mortgage rate lock-in effects on the Indianapolis move-up housing market from 2021 through 2025. The analysis combines a county-month panel (N = 300) for time-series models with individual deed records (N = 269,992 after the upstream price floor of $50,000 and ceiling of $15,000,000 enforced in `00_data_pipeline.py`) for transaction-level price models, plus a county-month-segment aggregation (N = 867) for the volume DiD. Identification rests on a Difference-in-Differences (DiD) design that treats the 2022 Federal Reserve tightening cycle as a quasi-natural experiment.
+This document describes the Indianapolis workflow for 2015 through 2025. The
+analysis combines a 660-row county-month panel with 438,427 deed records after
+the upstream nominal price floor of $50,000 and ceiling of $15,000,000. The
+current models are associational: the 2022 rate increase provides timing, but
+the expanded pre-period does not establish the parallel-trends assumption
+needed to describe the estimates as causal.
 
 ## Identification Strategy
 
-The DiD design exploits the abrupt rise in the 30-year fixed mortgage rate beginning in early 2022 as an exogenous shock to housing demand. The rate lock-in gap (`rate_gap`) is defined as the current 30-year fixed mortgage rate minus the 2021 baseline of 3.0 percentage points. The post-shock indicator is defined as `rate_gap >= 2.0`, meaning the prevailing mortgage rate has risen at least two percentage points above the 2021 baseline (a roughly 5% mortgage rate); this threshold is first crossed in mid-2022 in the FRED MORTGAGE30US series. The indicator is constructed in `01_data_pipeline.R` and inherited into the transaction-level dataset from `panel_data.rds` via the `rate_lookup` join. Treatment is assigned geographically: the four suburban counties (Hamilton, Boone, Hendricks, Johnson) constitute the treated group, and Marion County (Indianapolis proper) serves as the control. This assignment reflects the theoretical mechanism -- suburban buyers in the move-up tier face payment shock when locking into a rate above their existing mortgage, while Marion County's structural income constraint ($63,450 median HHI) limits sustained move-up demand regardless of rate conditions. The triple interaction (Suburb × Post × Move-up) isolates the differential rate-shock effect on suburban move-up properties net of geography, time, and segment main effects.
+The rate lock-in gap (`rate_gap`) is the monthly 30-year fixed mortgage rate
+minus a 3.0% baseline. `post` begins when that gap reaches two percentage
+points. Hamilton, Boone, Hendricks, and Johnson form the suburban comparison
+group and Marion is the urban core. The triple interaction describes the
+post-2022 suburban move-up differential; it does not, by itself, isolate a
+causal effect of mortgage rates.
 
 ## Parallel Trends Verification
 
-The identifying assumption requires that Marion County and suburban sale prices would have followed parallel trends in the absence of the rate shock. Figure 8 documents this graphically: mean sale prices by geography on a log scale track together at similar growth rates from January 2021 through early 2022, then diverge following the Federal Reserve's tightening cycle. The pre-shock period (2021) shows no statistically distinguishable trend difference across geographies. Post-shock divergence is concentrated in the move-up segment, consistent with the rate payment mechanism.
+Figure 8 displays the full 2015–May 2022 pre-period in constant 2025 dollars.
+The chart is diagnostic evidence only and does not impose a parallel-trends
+conclusion. Formal lead tests and small-cluster inference are required before
+causal DiD language is appropriate.
 
 ## Price Tier Segmentation
 
-Price tiers are derived from k-means clustering (k = 4) applied to raw sale_price (with a pre-fit cap at $15M to suppress data-entry outliers) on the full SDF deed record population. K-means is preferred over percentile-based cuts because it identifies natural discontinuities in the price distribution rather than imposing arbitrary quantile boundaries. The two highest clusters are collapsed into a single luxury tier due to thin ultra-luxury sample size (n = 112 ultra-luxury versus 4,700 luxury at the k = 4 fit on the current 2021–2025 data), which would produce unstable estimates in a separate stratum. The resulting segmentation places the entry/move-up boundary at approximately $380,000 and the move-up/luxury boundary at approximately $1,050,000. These breakpoints are validated against expected values (within a $50,000 tolerance) on each pipeline run to detect data-driven drift across annual refreshes.
+The source consideration remains in nominal `sale_price`. Monthly FRED
+`CPIAUCSL` converts it to `sale_price_2025` using the 2025 annual-average CPI-U
+as the base. October 2025 is linearly interpolated and flagged. K-means (k = 4)
+is fitted on 2021–2025 `sale_price_2025`; the two highest clusters are combined.
+The real-dollar boundaries are approximately $407,000 and $1.097 million.
 
 ## Panel Construction
 
-The county-month panel aggregates five counties over 60 months (January 2021 through December 2025), producing 300 county-month observations. Redfin county market tracker data supplies monthly median sale price, days on market (DOM), sale-to-list ratio, months of supply, and seller stress indicators. FRED MORTGAGE30US supplies the monthly mortgage rate series. Census ACS 2023 5-year estimates supply county-level median household income and population. Per-capita transaction counts by segment are derived from STATS Indiana SDF deed records, grouped to the county-month level. The `did` interaction term is the product of `treated` (suburb geography indicator) and `post` (rate shock indicator), constructed during the panel build after merging Redfin, FRED, Census, and SDF count sources.
+The panel covers five counties over 132 months (January 2015–December 2025),
+producing 660 county-month observations. Redfin prices are also converted to
+constant 2025 dollars. Redfin DOM is reported listing duration, not verified
+property-level cumulative marketing time; see
+[`dom_measurement_research.md`](dom_measurement_research.md).
 
 ## Model Specifications
 

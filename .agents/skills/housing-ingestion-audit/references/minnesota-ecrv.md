@@ -31,12 +31,16 @@
 
 Before panel work, query `ingest_batches` by extract year and status, compare the
 available archives with the intended research window, inspect quality summaries,
-and distinguish extract year from deed year. Verify overlapping archives and
-source amendment/withdrawal behavior before treating latest-observed selection
-as historically complete.
+and distinguish extract year from deed year. The `reconcile` command checks
+member accounting per extract year, classifies extract gaps, counts
+cross-extract revisions by changed field, and bridges current Twin Cities
+transactions to the research funnel; it exits nonzero on a failed identity.
+The feed republishes some amended CRVs and carries no withdrawal signal; the
+adopted latest-observed policy is recorded in `docs/decision_log.md`.
 
 ```bash
 .venv/bin/python scripts/00_mn_ecrv_pipeline.py all
+.venv/bin/python scripts/00_mn_ecrv_pipeline.py reconcile
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python .agents/skills/housing-ingestion-audit/scripts/summarize_ingestion.py \
   --repo-root . --state minnesota

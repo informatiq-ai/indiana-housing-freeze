@@ -187,6 +187,9 @@ def parse_record(raw, county_crosswalk=None, allow_cp1252=True, repair_invalid_c
         "property_county": property_county, "principal_residence": _boolean(root, "propertyForm/principalResidence"),
         "new_buildings_sale_year": _boolean(root, "propertyForm/newBuildingsOnSaleYear"),
         "what_included": _text(root, "propertyForm/whatIsIncludedInSale"),
+        "personal_property_included": _boolean(
+            root, "salesAgreementForm/personalPropertyIncludedInTotal"
+        ),
     }
     for field in ("relatedInd", "giftInd", "governmentInd", "legalActionInd", "nameChangeInd", "nonMarketPriceInd", "nonListedInd", "taxExemptInd"):
         transaction[_snake(field[:-3])] = _boolean(root, "supplementaryForm/" + field)

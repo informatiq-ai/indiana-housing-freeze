@@ -3,10 +3,14 @@ import sys
 import tempfile
 import unittest
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from mn_ecrv import PARSER_VERSION
 from mn_ecrv.schema import parse_record
-from mn_ecrv.store import batch_complete, connect, insert_version, refresh_views
+from mn_ecrv.store import (
+    batch_complete, connect, export_research_parquet, insert_version, refresh_views,
+)
 
 
 def xml(price):
@@ -25,6 +29,11 @@ class StoreTests(unittest.TestCase):
             database = connect(Path(directory) / "test.sqlite")
             older = parse_record(xml("300000"))
             newer = parse_record(xml("310000"))
+            for record in (older, newer):
+                record.transaction.update({
+                    "county_name": "Hennepin", "county_fips": "27053",
+                    "is_twin_cities": True,
+                })
             for batch_id, archive_hash, observed, record in (
                 ("new:1", "new", "2024-02-01T07:00:00", newer),
                 ("old:1", "old", "2024-01-01T07:00:00", older),
@@ -47,6 +56,16 @@ class StoreTests(unittest.TestCase):
             ).fetchone()[0], "310000")
             self.assertEqual(database.execute("SELECT count(*) FROM record_versions").fetchone()[0], 2)
             self.assertTrue(batch_complete(database, "new"))
+
+            output = Path(directory) / "research_extract"
+            summary = export_research_parquet(database, output, 2015, 2025)
+            self.assertFalse(summary["cached"])
+            self.assertEqual(summary["rows"]["transactions"], 1)
+            exported = pd.read_parquet(output / "ecrv_transactions.parquet")
+            self.assertEqual(exported.iloc[0]["gross_sale_price"], "310000")
+            self.assertNotIn("member_name", exported.columns)
+            cached = export_research_parquet(database, output, 2015, 2025)
+            self.assertTrue(cached["cached"])
             database.close()
 
 

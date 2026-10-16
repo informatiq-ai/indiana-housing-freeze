@@ -37,7 +37,7 @@
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python scripts/00_indiana_sdf_pipeline.py --input-dir .
+.venv/bin/python scripts/00_indiana_sdf_pipeline.py --input-dir data/raw/in
 .venv/bin/python .agents/skills/housing-ingestion-audit/scripts/summarize_ingestion.py \
   --repo-root . --state indiana
 ```

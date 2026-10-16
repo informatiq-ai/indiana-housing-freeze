@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Docs Style"
+  short_description: "Write project prose to the repository's style and attribution rules"
+  default_prompt: "Use $housing-docs-style to revise this documentation to the project's writing rules."

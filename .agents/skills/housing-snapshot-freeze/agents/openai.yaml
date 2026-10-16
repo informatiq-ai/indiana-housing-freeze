@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Snapshot Freeze"
+  short_description: "Hash and freeze release-candidate analysis snapshots"
+  default_prompt: "Use $housing-snapshot-freeze to freeze or verify the analysis snapshot."

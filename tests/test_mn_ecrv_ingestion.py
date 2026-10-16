@@ -1,9 +1,11 @@
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from mn_ecrv.schema import RecordError, parse_record
+from mn_ecrv.store import connect, insert_versions, refresh_views
 
 
 def modern(extra_property="", extra_sales="", extra_supplementary="", party=""):
@@ -69,6 +71,47 @@ class SchemaTests(unittest.TestCase):
         record = parse_record(modern(extra_supplementary='<nonMarketPriceInd>true</nonMarketPriceInd>'), self.crosswalk)
         self.assertTrue(record.transaction["non_market_price"])
         self.assertIsNone(record.transaction["gift"])
+
+    def test_personal_property_inclusion_flag_is_retained(self):
+        record = parse_record(modern(
+            extra_sales="<personalPropertyIncludedInTotal>true</personalPropertyIncludedInTotal>"
+        ), self.crosswalk)
+        self.assertTrue(record.transaction["personal_property_included"])
+
+    def test_batched_store_selects_latest_and_retains_first_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = connect(Path(directory) / "ecrv.sqlite")
+            first = parse_record(modern(), self.crosswalk)
+            revised = parse_record(
+                modern().replace(b"300000.0000", b"310000.0000"), self.crosswalk
+            )
+            version_ids = insert_versions(database, [first, revised])
+            for batch_id, archive_hash, observed, version_id, record in (
+                ("batch-1", "archive-1", "2024-01-08T07:00:00", version_ids[0], first),
+                ("batch-2", "archive-2", "2024-02-05T07:00:00", version_ids[1], revised),
+            ):
+                database.execute("""INSERT INTO ingest_batches (
+                    batch_id, archive_sha256, archive_name, archive_path,
+                    extract_timestamp, archive_bytes, parser_version, status,
+                    member_count, valid_count, recovered_count, error_count
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", [
+                    batch_id, archive_hash, f"{batch_id}.zip", f"/{batch_id}.zip",
+                    observed, 100, "1.1.0", "complete", 1, 1, 0, 0,
+                ])
+                database.execute(
+                    "INSERT INTO record_observations VALUES (?,?,?,?,?,?)",
+                    [batch_id, 1, "27_123.xml", record.transaction["source_key"],
+                     version_id, record.raw_sha256],
+                )
+            database.commit()
+            refresh_views(database)
+            row = database.execute("""SELECT gross_sale_price,
+                first_extract_timestamp, extract_timestamp
+                FROM current_transactions""").fetchone()
+            database.close()
+            self.assertEqual(row, (
+                "310000.0000", "2024-01-08T07:00:00", "2024-02-05T07:00:00"
+            ))
 
 
 if __name__ == "__main__":

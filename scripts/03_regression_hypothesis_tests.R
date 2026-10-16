@@ -15,9 +15,9 @@
 #   specification: base, controls, interact, county_fe, twoway_fe, simple, fe, triple
 #
 # Unit of analysis:
-#   Redfin panel:     County-month cell (5 counties × 60 months;
+#   Redfin panel:     County-month cell (5 counties × 132 months;
 #                     nrow(panel_data) printed at runtime via cat())
-#   SDF transactions: Individual deed record (study window 2021–2025;
+#   SDF transactions: Individual deed record (study window 2015–2025;
 #                     nrow(sdf) printed at runtime via cat())
 #
 # Key methodological notes:
@@ -26,7 +26,7 @@
 #   2. Marion income constraint (median HHI carried in `marion_hhi`)
 #      means DiD is a conservative lower bound on the true suburban
 #      treatment effect
-#   3. DOM subject to delist-relist gaming — lower bound caveat
+#   3. DOM may differ from property-level cumulative marketing time
 #   4. luxury tier driven by thin market volatility, not rate sensitivity
 #   5. OVB candidates: Hamilton County new construction (Eli Lilly/Amazon),
 #      school district premiums (Carmel/Fishers), corporate relocations
@@ -37,6 +37,26 @@ if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tidyverse, modelsummary, lmtest, sandwich, scales, webshot2,
                here, sf, tigris, ggrepel)
 
+# Set INDIANA_ANALYSIS_OUTPUT_ROOT to generate an isolated analysis run without
+# replacing the published outputs. The default preserves the historical paths.
+output_setting <- Sys.getenv("INDIANA_ANALYSIS_OUTPUT_ROOT", "")
+analysis_output_root <- if (!nzchar(output_setting)) {
+  here::here("outputs")
+} else if (grepl("^/", output_setting)) {
+  output_setting
+} else {
+  here::here(output_setting)
+}
+figures_dir <- file.path(analysis_output_root, "figures")
+tables_dir <- file.path(analysis_output_root, "tables")
+models_dir <- file.path(analysis_output_root, "models")
+dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(tables_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
+figure_path <- function(filename) file.path(figures_dir, filename)
+table_path <- function(filename) file.path(tables_dir, filename)
+model_path <- function(filename) file.path(models_dir, filename)
+
 # ── Analysis constants ────────────────────────────────────────────────────────
 RATE_BASELINE <- 3.0     # 2021 avg 30-yr fixed rate used as lock-in baseline
 luxury_CAP     <- 15e6    # $15M — removes data entry errors from luxury tier
@@ -44,11 +64,19 @@ MIN_PRICE     <- 50000   # $50K — removes implausible deed transfers
 LTV_RATIO     <- 0.80    # 80% LTV assumption for affordability calculation
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-panel_data <- readRDS(here::here("data/processed/panel_data.rds"))
+panel_data <- readRDS(here::here("data/processed/panel_data.rds")) %>%
+  mutate(
+    median_sale_price_nominal = median_sale_price,
+    median_sale_price = median_sale_price_2025
+  )
 
 sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"),
                     show_col_types = FALSE) %>%
-  filter(!(price_segment == "luxury" & sale_price > luxury_CAP))
+  mutate(
+    sale_price_nominal = sale_price,
+    sale_price = sale_price_2025
+  ) %>%
+  filter(!(price_segment == "luxury" & sale_price_nominal > luxury_CAP))
 
 # ── Factor releveling — entry tier and metro as reference groups ──────────────
 panel_data <- panel_data %>%
@@ -91,7 +119,7 @@ sdf <- sdf_raw %>%
   mutate(
     treated = if_else(geography == "suburb", 1L, 0L),
     did     = treated * post,
-    monthly_payment = (sale_price * LTV_RATIO *
+    monthly_payment = (sale_price_nominal * LTV_RATIO *
                          (mortgage_rate / 1200 *
                             (1 + mortgage_rate / 1200)^360) /
                          ((1 + mortgage_rate / 1200)^360 - 1)),
@@ -102,7 +130,8 @@ sdf <- sdf_raw %>%
     price_segment       = relevel(price_segment,       ref = "entry"),
     geography           = relevel(factor(geography),   ref = "metro")
   ) %>%
-  filter(!is.na(rate_gap), !is.na(sale_price), sale_price > MIN_PRICE)
+  filter(!is.na(rate_gap), !is.na(sale_price),
+         sale_price_nominal > MIN_PRICE)
 
 n_sdf   <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 n_label <- n_sdf
@@ -179,14 +208,14 @@ sdf %>%
                paste0("$", midlux_break_lbl))
   ) +
   labs(
-    title    = "Distribution of Single Family Residential Sale Prices",
-    subtitle = paste0("Log scale | Indianapolis metro ", year_range_label,
+    title    = "Distribution of Single Family Residential Real Sale Prices",
+    subtitle = paste0("Constant 2025 dollars, log scale | Indianapolis metro ", year_range_label,
                       " | N = ", n_label, " transactions"),
-    x       = "Sale price (log scale)",
+    x       = "Real sale price (2025 dollars, log scale)",
     y       = "Count of transactions",
     caption = paste0(
       "Source: STATS Indiana SDF deed records.\n",
-      "Raw sale prices are right-skewed. Log transformation normalizes the distribution.\n",
+      "Real sale prices are right-skewed. Log transformation normalizes the distribution.\n",
       "Median ", median_label, " reflects entry-tier dominance (",
       entry_pct, "% of transactions)."
     )
@@ -202,8 +231,8 @@ sdf %>%
     panel.grid.minor      = element_blank()
   )
 
-ggsave(here::here("outputs/figures/fig11_histogram_price.png"), width = 9, height = 5, dpi = 300)
-ggsave(here::here("outputs/figures/fig11_histogram_price.pdf"), width = 9, height = 5)
+ggsave(figure_path("fig11_histogram_price.png"), width = 9, height = 5, dpi = 300)
+ggsave(figure_path("fig11_histogram_price.pdf"), width = 9, height = 5)
 cat("Saved fig11_histogram_price.png/.pdf — median:", median_label, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -212,7 +241,7 @@ cat("Saved fig11_histogram_price.png/.pdf — median:", median_label, "\n")
 # Illustrates two-mechanism hypothesis: Marion clusters bottom-left (income-constrained), Hamilton top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-fig10_stats <- readRDS(here::here("data/processed/fig10_correlation_stats.rds"))
+fig10_stats <- readRDS(model_path("fig10_correlation_stats.rds"))
 cat("ZIP-level HHI-price correlation: r =", fig10_stats$r,
     "| R² =", fig10_stats$r2,
     "| N =", fig10_stats$n_zip, "zip codes\n\n")
@@ -338,19 +367,19 @@ datasummary_df(
     "H\u2080: \u03bc_pre = \u03bc_post \u00b7 ",
     "H\u2081: \u03bc_pre \u2260 \u03bc_post (two-tailed) \u00b7 ",
     "Welch t-test (unequal variances) \u00b7 ",
-    "Pre = rate_gap < 2.0 (early 2021\u2013mid-2022) \u00b7 Post = rate_gap \u2265 2.0 (mid-2022\u20132025) \u00b7 ",
+    "Pre = rate_gap < 2.0 (2015\u2013mid-2022) \u00b7 Post = rate_gap \u2265 2.0 (mid-2022\u20132025) \u00b7 ",
     "Means transformed back to dollars \u00b7 N = ", n_label,
     " \u00b7 *** p<0.001 ** p<0.01 * p<0.05"
   ),
-  output = here::here("outputs/tables/table2_hypothesis_test.html")
+  output = table_path("table2_hypothesis_test.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table2_hypothesis_test.html")),
-  file  = here::here("outputs/tables/table2_hypothesis_test.png"),
+  url   = paste0("file://", table_path("table2_hypothesis_test.html")),
+  file  = table_path("table2_hypothesis_test.png"),
   delay = 2, zoom = 1.5, vwidth = 1200
 )
-file.remove(here::here("outputs/tables/table2_hypothesis_test.html"))
+file.remove(table_path("table2_hypothesis_test.html"))
 cat("Saved table2_hypothesis_test.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -405,14 +434,14 @@ datasummary_correlation(
     "Aggregation to ZIP code smooths this noise, revealing the income-price relationship. ",
     "Both values are correct at their respective units of analysis."
   ),
-  output = here::here("outputs/tables/table3_correlation.html")
+  output = table_path("table3_correlation.html")
 )
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table3_correlation.html")),
-  file  = here::here("outputs/tables/table3_correlation.png"),
+  url   = paste0("file://", table_path("table3_correlation.html")),
+  file  = table_path("table3_correlation.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-file.remove(here::here("outputs/tables/table3_correlation.html"))
+file.remove(table_path("table3_correlation.html"))
 cat("Saved outputs/tables/table3_correlation.png\n")
 
 se_table <- sdf %>%
@@ -440,15 +469,15 @@ datasummary_df(
   title  = "Table 4: Standard Error of Log Sale Price by Price Segment",
   notes  = paste0("SE = SD / \u221aN \u00b7 95% CI = mean \u00b1 1.96 \u00d7 SE \u00b7 ",
                   "DV = log sale price \u00b7 N = ", n_label),
-  output = here::here("outputs/tables/table4_standard_error.html"),
+  output = table_path("table4_standard_error.html"),
   fmt    = 3
 )
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table4_standard_error.html")),
-  file  = here::here("outputs/tables/table4_standard_error.png"),
+  url   = paste0("file://", table_path("table4_standard_error.html")),
+  file  = table_path("table4_standard_error.png"),
   delay = 2, zoom = 1.5, vwidth = 1000
 )
-file.remove(here::here("outputs/tables/table4_standard_error.html"))
+file.remove(table_path("table4_standard_error.html"))
 cat("Saved table4_standard_error.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -650,9 +679,9 @@ modelsummary(
   notes     = paste0(
     "Simple DV is log sale price. DOM models DV is median DOM, ",
     "Redfin county-month panel (N=", n_panel, "). HC1 robust SEs. ",
-    "DOM subject to delist-relist gaming — lower bound interpretation."
+    "Reported DOM may differ from property-level cumulative marketing time after relisting."
   ),
-  output    = here::here("outputs/tables/table5_dom_models.html")
+  output    = table_path("table5_dom_models.html")
 )
 
 # ── TABLE 6: SDF price models — core squeeze evidence ────────────────────────
@@ -667,16 +696,16 @@ modelsummary(
   coef_map  = coef_map,
   coef_omit = "factor\\(county\\)|factor\\(year\\)",
   gof_map   = c("nobs", "r.squared", "adj.r.squared"),
-  title     = "Table 6: Rate Lock-In Effect on Sale Prices",
+  title     = "Table 6: Rate Lock-In Association with Real Sale Prices",
   notes     = paste0(
     "Source: STATS Indiana SDF deed records. ",
-    "DV: log sale price. N=", n_label, " transactions. HC1 robust SEs. ",
+    "DV: log sale price in constant 2025 dollars. N=", n_label, " transactions. HC1 robust SEs. ",
     "Luxury tier capped at ", dollar(luxury_CAP),
     ". County and year FE omitted from display. ",
     "OVB candidates: new construction (Hamilton County Eli Lilly/Amazon expansion), ",
     "school district premiums (Carmel/Fishers), corporate relocations."
   ),
-  output    = here::here("outputs/tables/table6_price_models.html")
+  output    = table_path("table6_price_models.html")
 )
 
 # ── TABLE 7: DiD models ────────────────────────────────────────────────────────
@@ -700,14 +729,14 @@ modelsummary(
     "Marion income constraint (median HHI ", marion_hhi_short,
     ") implies conservative lower bounds."
   ),
-  output    = here::here("outputs/tables/table7_did_models.html")
+  output    = table_path("table7_did_models.html")
 )
 
 cat("Saved: table5, table6, table7 HTML — rendering to PNG\n")
 
 for (tbl in c("table5_dom_models", "table6_price_models", "table7_did_models")) {
-  tbl_html <- here::here("outputs/tables", paste0(tbl, ".html"))
-  tbl_png  <- here::here("outputs/tables", paste0(tbl, ".png"))
+  tbl_html <- table_path(paste0(tbl, ".html"))
+  tbl_png  <- table_path(paste0(tbl, ".png"))
   webshot2::webshot(
     url   = paste0("file://", tbl_html),
     file  = tbl_png,
@@ -839,10 +868,10 @@ ggplot(rate_grid, aes(x = rate_gap, y = fit_dollars,
   
   # Segment labels annotating key rate-sensitivity findings
   annotate("text", x = 1.5, y = 1000000,
-           label = paste0("Move-up:\nHighly vulnerable to rate hikes\n(",
-                          squeeze_mult, "× Squeeze Multiplier)"),
+           label = paste0("Move-up:\nLarger modeled rate association\n(",
+                          squeeze_mult, "× entry-tier slope)"),
            color = "#ED7D31", fontface = "bold", hjust = 0, size = 3.5, lineheight = 0.9) +
-  annotate("text", x = 1.5, y = 400000, label = "Entry-Level:\nResilient to rate shocks",
+  annotate("text", x = 1.5, y = 400000, label = "Entry-Level:\nSmaller association",
            color = "#70AD47", fontface = "bold", hjust = 0, size = 3.5, lineheight = 0.9) +
 
 scale_color_manual(
@@ -859,16 +888,16 @@ scale_color_manual(
     breaks = c(100000, 250000, 500000, 750000, 1000000, 1500000, 2000000)
   ) +
   labs(
-    title    = "The Rate Penalty: Move-Up Market Bears the Brunt of Rate Hikes",
-    subtitle = paste0("Entry-level buyers remain insulated, while move-up properties face severe price degradation | N = ",
+    title    = "Modeled Real Sale Price by Mortgage-Rate Gap",
+    subtitle = paste0("Associational predictions in constant 2025 dollars | N = ",
                       n_sdf, " transactions"),
     x        = paste0("Rate Lock-In Gap (PP Above ", RATE_BASELINE, "% Baseline)"),
-    y        = "Predicted Rate Penalty ($)",
+    y        = "Predicted real sale price (2025 $)",
     color   = "Price segment",
     caption = paste0(
       "Source: STATS Indiana SDF deed records.\n",
       "N = ", n_sdf, " transactions after regression filters ",
-      "(matched to FRED rate, sale price >", dollar(MIN_PRICE), ").\n",
+      "(matched to FRED rate; nominal sale price >", dollar(MIN_PRICE), ").\n",
       "Luxury slope (", slope_luxury, "%/pp) reflects thin market volatility, ",
       "not behavioral rate sensitivity\n",
       "(~", luxury_annual, " transactions/county/year). ",
@@ -888,8 +917,8 @@ scale_color_manual(
     plot.margin      = margin(5, 50, 5, 5, "pt")
   )
 
-ggsave(here::here("outputs/figures/fig12_marginal_effects.png"), width = 10, height = 5.5, dpi = 300)
-ggsave(here::here("outputs/figures/fig12_marginal_effects.pdf"), width = 10, height = 5.5)
+ggsave(figure_path("fig12_marginal_effects.png"), width = 10, height = 5.5, dpi = 300)
+ggsave(figure_path("fig12_marginal_effects.pdf"), width = 10, height = 5.5)
 cat("Saved fig12_marginal_effects.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -926,7 +955,7 @@ forecast_tbl <- tibble(
 
 datasummary_df(
   forecast_tbl,
-  title = "Rate Sensitivity by Price Segment — Derived From M_Price_Interact Model",
+  title = "Real-Price Sensitivity by Price Segment — Derived From M_Price_Interact Model",
   notes = paste0(
     "Slopes from m_price_interact HC1 robust SEs, N = ", n_sdf, " transactions. ",
     "Squeeze multiplier = move-up slope / entry slope = constant across all rate environments. ",
@@ -934,15 +963,15 @@ datasummary_df(
     "% mortgage rate vs ", RATE_BASELINE, "% baseline). ",
     "Adj R\u00b2 = ", round(summary(m_price_interact)$adj.r.squared, 3), "."
   ),
-  output = here::here("outputs/tables/table8_rate_sensitivity.html")
+  output = table_path("table8_rate_sensitivity.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", here::here("outputs/tables/table8_rate_sensitivity.html")),
-  file  = here::here("outputs/tables/table8_rate_sensitivity.png"),
+  url   = paste0("file://", table_path("table8_rate_sensitivity.html")),
+  file  = table_path("table8_rate_sensitivity.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-file.remove(here::here("outputs/tables/table8_rate_sensitivity.html"))
+file.remove(table_path("table8_rate_sensitivity.html"))
 cat("Saved outputs/tables/table8_rate_sensitivity.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1075,9 +1104,9 @@ indy_squeeze_map <- ggplot(data = map_data) +
 
 # 7. EXPORT
 # ---------------------------------------------------------
-ggsave(here::here("outputs/figures/fig13_zip_squeeze_map.png"),
+ggsave(figure_path("fig13_zip_squeeze_map.png"),
        plot = indy_squeeze_map, width = 10, height = 8, dpi = 300, bg = "white")
-ggsave(here::here("outputs/figures/fig13_zip_squeeze_map.pdf"),
+ggsave(figure_path("fig13_zip_squeeze_map.pdf"),
        plot = indy_squeeze_map, width = 10, height = 8)
 
 
@@ -1085,15 +1114,9 @@ ggsave(here::here("outputs/figures/fig13_zip_squeeze_map.pdf"),
 # SAVE MODELS FOR REPRODUCIBILITY
 # ══════════════════════════════════════════════════════════════════════════════
 
-saveRDS(m_price_interact,    here::here("data/processed/m_price_interact.rds"))
-saveRDS(m_did_price_triple,  here::here("data/processed/m_did_price_triple.rds"))
-saveRDS(m_did_volume_triple, here::here("data/processed/m_did_volume_triple.rds"))
+saveRDS(m_price_interact,    model_path("m_price_interact.rds"))
+saveRDS(m_did_price_triple,  model_path("m_did_price_triple.rds"))
+saveRDS(m_did_volume_triple, model_path("m_did_volume_triple.rds"))
 
-cat("Figures: outputs/figures/fig11_histogram_price.png/.pdf,",
-    "fig12_marginal_effects.png/.pdf, fig13_zip_squeeze_map.png/.pdf\n")
-cat("Tables:  outputs/tables/table5_dom_models.png, table6_price_models.png,",
-    "table7_did_models.png, table2_hypothesis_test.png,",
-    "table3_correlation.png, table4_standard_error.png,",
-    "table8_rate_sensitivity.png\n")
-cat("Models:  data/processed/m_price_interact.rds, m_did_price_triple.rds,",
-    "m_did_volume_triple.rds\n")
+cat("Analysis output root:", analysis_output_root, "\n")
+cat("Figures, tables, and saved models were written under that directory.\n")
