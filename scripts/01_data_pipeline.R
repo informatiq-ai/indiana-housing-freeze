@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Indiana Move-Up Housing Squeeze — Panel Data Construction
+# Indiana Move-Up Housing Squeeze — Panel Data Construction, 2015–2025
 #
 # Research Question: Does the mortgage rate lock-in effect disproportionately
 # impact move-up ($380K–$1.05M) homes in Indianapolis suburbs vs Marion County?
@@ -12,13 +12,14 @@
 #   - Redfin county market tracker (DOM, sale-to-list, median price)
 #   - STATS Indiana SDF deed records (transaction-level price band counts)
 #   - FRED MORTGAGE30US (30-yr fixed mortgage rate)
+#   - FRED CPIAUCSL (monthly CPI-U; prices expressed in constant 2025 dollars)
 #   - Census ACS 2023 5-year (median HHI, population — county and ZIP level)
 #
 # Output: panel_data.rds / panel_data.csv
 #         zip_median_prices.csv (with ZCTA-level HHI)
 #
 # Unit of analysis: county × month cell
-#   5 counties × 60 months = 300 rows
+#   5 counties × 132 months = 660 rows
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Package setup ─────────────────────────────────────────────────────────────
@@ -36,12 +37,14 @@ fredr_set_key(Sys.getenv("FRED_API_KEY"))
 # Downloaded nationally, pre-filtered to 5 Indianapolis-area counties:
 #   Marion (metro/control), Hamilton, Boone, Hendricks, Johnson (suburbs/treated)
 # All 5 property types present — filter to Single Family Residential only
-# Year range in file: 2012–2026 — filter to 2021–2025 (full rate cycle)
+# Year range in file: 2012–2026 — filter to 2015–2025
 # ══════════════════════════════════════════════════════════════════════════════
 
 target_counties <- c("Boone County, IN", "Hamilton County, IN",
                      "Hendricks County, IN", "Marion County, IN",
                      "Johnson County, IN")
+study_start_year <- 2015L
+study_end_year   <- 2025L
 
 redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "NA", "--")) %>%
   rename_with(~ str_to_lower(str_replace_all(., "[ /]", "_"))) %>%
@@ -54,7 +57,7 @@ redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "
   ) %>%
   filter(
     region        %in% target_counties,               # restrict to 5-county study area
-    year          >= 2021, year <= 2025,               # rate cycle window
+    year          >= study_start_year, year <= study_end_year,
     property_type == "Single Family Residential",      # exclude condo/townhouse
     !is.na(median_sale_price),
     !is.na(median_dom),
@@ -64,7 +67,7 @@ redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "
   )
 
 cat("Redfin rows after filter:", nrow(redfin), "\n")
-cat("Expected: ~300 (5 counties × 60 months)\n")
+cat("Expected: ~660 (5 counties × 132 months)\n")
 redfin %>% count(region, property_type) %>% print()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -146,7 +149,7 @@ if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
 
 rates_raw <- fredr(
   series_id         = "MORTGAGE30US",
-  observation_start = as.Date("2021-01-01"),
+  observation_start = as.Date("2015-01-01"),
   observation_end   = as.Date("2025-12-31"),
   frequency         = "m"
 ) %>%
@@ -160,6 +163,23 @@ cat("Mortgage rates loaded:", nrow(rates_raw), "months\n")
 cat("Rate range:", round(min(rates_raw$mortgage_rate), 2),
     "% –", round(max(rates_raw$mortgage_rate), 2), "%\n")
 
+# CPI is materialized by 00_data_pipeline.py from FRED CPIAUCSL. It contains a
+# complete 2015–2025 monthly grid and flags any bounded interpolation (October
+# 2025 is absent from the source release because of the appropriations lapse).
+cpi_monthly <- read_csv(
+  here::here("data/processed/cpi_u_monthly_2015_2025.csv"),
+  show_col_types = FALSE
+) %>%
+  mutate(year = as.integer(year), month = as.integer(month))
+
+cpi_2025_base <- cpi_monthly %>%
+  filter(year == 2025L) %>%
+  summarise(value = mean(cpi)) %>%
+  pull(value)
+
+stopifnot(nrow(cpi_monthly) == 132L, !is.na(cpi_2025_base))
+cat("2025 annual-average CPI-U base:", round(cpi_2025_base, 3), "\n")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 5: STATS INDIANA SDF — TRANSACTION COUNTS BY PRICE BAND
 # Source: Indiana Dept of Local Government Finance / STATS Indiana
@@ -171,7 +191,7 @@ cat("Rate range:", round(min(rates_raw$mortgage_rate), 2),
 # ══════════════════════════════════════════════════════════════════════════════
 
 sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"), show_col_types = FALSE) %>%
-  filter(!(price_segment == "luxury" & sale_price > 15000000))
+  filter(!(price_segment == "luxury" & sale_price_2025 > 15000000))
 
 sdf_counts <- sdf_raw %>%
   mutate(price_segment = factor(price_segment,
@@ -179,12 +199,14 @@ sdf_counts <- sdf_raw %>%
   group_by(county, year, month, price_segment) %>%
   summarise(
     transactions          = n(),
-    median_sale_price_sdf = median(sale_price, na.rm = TRUE),
+    median_sale_price_sdf = median(sale_price_2025, na.rm = TRUE),
+    median_sale_price_sdf_nominal = median(sale_price, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   pivot_wider(
     names_from  = price_segment,
-    values_from = c(transactions, median_sale_price_sdf),
+    values_from = c(transactions, median_sale_price_sdf,
+                    median_sale_price_sdf_nominal),
     values_fill = 0
   ) %>%
   mutate(
@@ -195,7 +217,7 @@ sdf_counts <- sdf_raw %>%
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 6: BUILD PANEL DATA — JOIN ALL SOURCES
-# Unit of analysis: county × month (300 rows = 5 counties × 60 months)
+# Unit of analysis: county × month (660 rows = 5 counties × 132 months)
 # ══════════════════════════════════════════════════════════════════════════════
 
 panel_data <- redfin %>%
@@ -203,19 +225,27 @@ panel_data <- redfin %>%
     # Clean county name from Redfin region field
     county = str_remove(region, " County, IN"),
     
-    # Price segment from Redfin county median using k-means confirmed breaks
-    # Limitation: county median can shift between segments as prices appreciate
-    # SDF transaction-level data resolves this in regression analysis
-    price_segment = case_when(
-      median_sale_price <  380000  ~ "entry",
-      median_sale_price <= 1050000 ~ "move_up",
-      TRUE                         ~ "luxury"
-    ) %>% factor(levels = c("entry", "move_up", "luxury")),
-    
+    median_sale_price_nominal = median_sale_price,
+
     # Geography: Marion = metro core (control), suburbs = treated
     # Rationale: Marion buyers are necessity-driven; suburban buyers are
     # move-up buyers most exposed to rate lock-in payment shock
     geography = if_else(county == "Marion", "metro", "suburb") %>% factor()
+  ) %>%
+  left_join(cpi_monthly %>% select(year, month, cpi, cpi_imputed),
+            by = c("year", "month")) %>%
+  mutate(
+    median_sale_price_2025 = median_sale_price_nominal * cpi_2025_base / cpi,
+
+    # Price segment from the real Redfin county median using the 2025-dollar
+    # k-means breaks derived from transaction records.
+    # Limitation: county median can shift between segments as prices appreciate
+    # SDF transaction-level data resolves this in regression analysis
+    price_segment = case_when(
+      median_sale_price_2025 <  407000  ~ "entry",
+      median_sale_price_2025 <= 1097000 ~ "move_up",
+      TRUE                         ~ "luxury"
+    ) %>% factor(levels = c("entry", "move_up", "luxury"))
   ) %>%
   left_join(rates_raw,     by = c("year", "month")) %>%
   left_join(income_lookup, by = "county") %>%
@@ -228,7 +258,7 @@ panel_data <- redfin %>%
     # Affordability ratio: monthly payment as share of median monthly income
     # Captures income constraint mechanism in Marion County
     # Formula: 30-yr fixed amortization on 80% LTV
-    monthly_payment = (median_sale_price * 0.80 *
+    monthly_payment = (median_sale_price_nominal * 0.80 *
                          (mortgage_rate / 1200 *
                             (1 + mortgage_rate / 1200)^360) /
                          ((1 + mortgage_rate / 1200)^360 - 1)),
@@ -322,7 +352,8 @@ panel_data %>%
 cat("\n── Rate gap distribution by era ─────────────────────────────────────────\n")
 panel_data %>%
   mutate(era = case_when(
-    year <= 2021             ~ "Baseline (2021)",
+    year <= 2019             ~ "Pre-pandemic baseline (2015–19)",
+    year <= 2021             ~ "Pandemic / low-rate (2020–21)",
     year == 2022             ~ "Rate shock (2022)",
     year %in% c(2023, 2024) ~ "Elevated plateau (2023–24)",
     year == 2025             ~ "Persistent high (2025)"

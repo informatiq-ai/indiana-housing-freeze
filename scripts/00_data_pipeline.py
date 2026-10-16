@@ -1,7 +1,7 @@
 """
 00_data_pipeline.py
 ────────────────────────────────────────────────────────────────────────────────
-Indiana Move-Up Housing Study — Clean Data Pipeline
+Indiana Move-Up Housing Study — Clean Data Pipeline (2015–2025)
 
 Methodology:
   County normalization  — strips trailing "COUNTY" suffix and uppercases County_Name
@@ -10,8 +10,9 @@ Methodology:
                           flags = N; excludes mixed-use parcels
   Arm's-length criteria — requires B1_Valuable_Consider = Y; excludes sheriff sales,
                           short sales, and quitclaim deeds
-  Price segmentation    — k-means (k=4) on raw sale_price (no log transform); top two
-                          tiers collapsed into luxury; natural breaks at ~$380K and ~$1.05M
+  Inflation adjustment  — monthly CPI-U (CPIAUCSL), expressed in constant 2025 dollars
+  Price segmentation    — k-means (k=4) on sale_price_2025 (no log transform); top two
+                          tiers collapsed into luxury
 
 Outputs:
   sdf_indiana.csv       — transaction-level cleaned data
@@ -25,6 +26,9 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.cluster import KMeans
+
+from indiana_sdf.established_bridge import load_legacy_backfill
+from inflation import add_real_price, load_monthly_cpi
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,6 +72,9 @@ TARGET_COUNTIES = {"MARION", "HAMILTON", "BOONE", "HENDRICKS", "JOHNSON"}
 YEARS     = [2021, 2022, 2023, 2024, 2025]
 INPUT_DIR = str(ROOT / "data/raw/in")
 OUTPUT_FILE = str(ROOT / "data/processed/sdf_indiana.csv")
+LEGACY_HISTORY_FILE = ROOT / "data/processed/indiana_sdf_history.csv"
+CPI_CACHE = ROOT / "data/processed/cpi_u_monthly_2015_2025.csv"
+CPI_RESEARCH_FALLBACK = ROOT / "data/processed/research/external/fred_monthly.csv"
 
 KEEP_COLS = [
     "SDF_ID",
@@ -278,8 +285,44 @@ n_dropped_zip = n_before_zip_filter - len(sdf_with_zip)
 print(f"Rows with valid zip code: {len(sdf_with_zip):,} "
       f"(dropped {n_dropped_zip:,} unmatched/invalid)")
 
-# ── Step 3b: K-means price segmentation ──────────────────────────────────────
-# K-means (k=4) on raw sale_price — no scaling, no log transform.
+# ── Step 3a: Append audited 2015–2020 legacy transactions ────────────────────
+# The established modern path above remains unchanged. Legacy parsing,
+# duplicate handling, and eligibility are owned by 00_indiana_sdf_pipeline.py;
+# this bridge only maps its accepted rows into the established output contract.
+modern_rows = len(sdf_with_zip)
+legacy_backfill, legacy_audit = load_legacy_backfill(LEGACY_HISTORY_FILE)
+overlapping_ids = set(sdf_with_zip["SDF_ID"].astype(str)) & set(
+    legacy_backfill["SDF_ID"].astype(str)
+)
+if overlapping_ids:
+    raise AssertionError(
+        f"Legacy backfill overlaps {len(overlapping_ids):,} modern SDF_ID values"
+    )
+sdf_with_zip = pd.concat([legacy_backfill, sdf_with_zip], ignore_index=True)
+print("\nLegacy 2015–2020 backfill:")
+for key, value in legacy_audit.items():
+    print(f"  {key}: {value:,}")
+print(f"Combined 2015–2025 rows before segmentation: {len(sdf_with_zip):,}")
+
+# ── Step 3b: Convert nominal prices to constant 2025 dollars ─────────────────
+# Preserve sale_price as the reported nominal consideration. All time-series
+# comparisons and price tiers use sale_price_2025. CPIAUCSL is monthly CPI-U;
+# the base is the arithmetic mean of the twelve 2025 monthly observations.
+cpi_monthly = load_monthly_cpi(
+    CPI_CACHE,
+    start_year=2015,
+    end_year=2025,
+    fallback_path=CPI_RESEARCH_FALLBACK,
+)
+sdf_with_zip, cpi_2025_base = add_real_price(sdf_with_zip, cpi_monthly)
+print(f"2025 annual-average CPI-U base: {cpi_2025_base:.3f}")
+print(
+    "CPI observations interpolated:",
+    ", ".join(cpi_monthly.loc[cpi_monthly["cpi_imputed"], "sale_month"]),
+)
+
+# ── Step 3c: K-means price segmentation ──────────────────────────────────────
+# K-means (k=4) on constant-2025-dollar price — no scaling, no log transform.
 # Raw Euclidean distances on dollar values naturally find market-gap breaks.
 # Confirmed breakpoints (2021–2025 data): $380K (entry/move_up),
 # $1.05M (move_up/luxury). Top two clusters (luxury + ultra-luxury)
@@ -289,7 +332,9 @@ print(f"Rows with valid zip code: {len(sdf_with_zip):,} "
 # catastrophically distort raw-price k-means cluster centers.
 # pd.cut below is still applied to the full sdf_with_zip dataset.
 prices_capped = sdf_with_zip.loc[
-    sdf_with_zip["sale_price"] <= 15_000_000, ["sale_price"]
+    (sdf_with_zip["data_year"].isin(YEARS))
+    & (sdf_with_zip["sale_price_2025"] <= 15_000_000),
+    ["sale_price_2025"],
 ]
 
 kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
@@ -304,8 +349,8 @@ breaks = [
 ]
 print(f"Derived breakpoints: entry/move_up=${breaks[0]:,.0f}  move_up/luxury=${breaks[1]:,.0f}")
 
-EXPECTED_ENTRY_BREAK  = 380_000
-EXPECTED_LUXURY_BREAK = 1_050_000
+EXPECTED_ENTRY_BREAK  = 407_000
+EXPECTED_LUXURY_BREAK = 1_097_000
 BREAK_TOLERANCE       = 50_000
 if abs(breaks[0] - EXPECTED_ENTRY_BREAK) > BREAK_TOLERANCE:
     raise ValueError(
@@ -324,7 +369,7 @@ PRICE_BINS   = [0, breaks[0], breaks[1], 15_000_000]
 PRICE_LABELS = ["entry", "move_up", "luxury"]
 
 sdf_with_zip["price_segment"] = pd.cut(
-    sdf_with_zip["sale_price"],
+    sdf_with_zip["sale_price_2025"],
     bins=PRICE_BINS,
     labels=PRICE_LABELS,
 )
@@ -337,7 +382,7 @@ sdf_with_zip["price_segment"] = pd.cut(
 na_segment_mask = sdf_with_zip["price_segment"].isna()
 n_na_segment = int(na_segment_mask.sum())
 if n_na_segment:
-    fallback_prices = sdf_with_zip.loc[na_segment_mask, "sale_price"]
+    fallback_prices = sdf_with_zip.loc[na_segment_mask, "sale_price_2025"]
     fallback_labels = np.where(
         fallback_prices <= breaks[0], "entry",
         np.where(fallback_prices <= breaks[1], "move_up", "luxury"),
@@ -349,7 +394,7 @@ if n_na_segment:
     seg.loc[na_segment_mask] = fallback_labels
     sdf_with_zip["price_segment"] = pd.Categorical(seg, categories=PRICE_LABELS)
     print(f"[WARN] Re-assigned {n_na_segment:,} NA price_segment rows "
-          f"to nearest tier by sale_price vs derived breakpoints "
+          f"to nearest tier by sale_price_2025 vs derived breakpoints "
           f"(${breaks[0]:,.0f}, ${breaks[1]:,.0f})")
 
 print(f"\nPrice segment distribution:")
@@ -357,7 +402,7 @@ print(sdf_with_zip["price_segment"].value_counts().sort_index())
 print(f"\nBy county and segment:")
 print(sdf_with_zip.groupby(["county", "price_segment"]).size().unstack(fill_value=0))
 
-# ── Step 3c: ZCTA HHI — Census ACS 2023 5-year ───────────────────────────────
+# ── Step 3d: ZCTA HHI — Census ACS 2023 5-year ───────────────────────────────
 # Median household income at ZCTA level (B19013_001E).
 # ACS ZCTA endpoint requires a national pull; filtered to study-area zip codes.
 # Cached to hhi_zcta.csv — re-run only if the cache is missing.
@@ -413,7 +458,8 @@ zip_summary = (
     sdf_with_zip[sdf_with_zip["sale_price"] > 50_000]
     .groupby(["zip_code", "county"])
     .agg(
-        median_sale_price = ("sale_price", "median"),
+        median_sale_price = ("sale_price_2025", "median"),
+        median_sale_price_nominal = ("sale_price", "median"),
         transactions      = ("sale_price", "count"),
         pct_move_up       = ("price_segment", lambda x: (x == "move_up").mean() * 100),
     )
@@ -464,6 +510,7 @@ print(zip_summary.sort_values("median_sale_price", ascending=False).head(10).to_
 n_final     = len(sdf_with_zip)
 null_zip    = int(sdf_with_zip["zip_code"].isna().sum())
 null_price  = int(sdf_with_zip["sale_price"].isna().sum())
+null_real_price = int(sdf_with_zip["sale_price_2025"].isna().sum())
 null_date   = int(sdf_with_zip["sale_date"].isna().sum())
 null_seg    = int(sdf_with_zip["price_segment"].isna().sum())
 n_at_floor  = int((sdf_with_zip["sale_price"] == 50_000).sum())
@@ -477,6 +524,7 @@ print("\n── Validation ─────────────────�
 print(f"  Final rows                : {n_final:,}")
 print(f"  Null zip_code             : {null_zip}")
 print(f"  Null sale_price           : {null_price}")
+print(f"  Null sale_price_2025      : {null_real_price}")
 print(f"  Null sale_date            : {null_date}")
 print(f"  Null price_segment        : {null_seg}")
 print(f"  sale_price == 50,000      : {n_at_floor}")
@@ -486,11 +534,13 @@ print(f"  sale_price min / max      : ${price_min:,.0f} / ${price_max:,.0f}")
 
 assert null_zip    == 0, f"zip_code has {null_zip} null values"
 assert null_price  == 0, f"sale_price has {null_price} null values"
+assert null_real_price == 0, f"sale_price_2025 has {null_real_price} null values"
 assert null_date   == 0, f"sale_date has {null_date} null values"
 assert null_seg    == 0, f"price_segment has {null_seg} null values"
 assert n_at_floor  == 0, f"{n_at_floor} rows at sale_price == 50,000"
 assert n_above_cap == 0, f"{n_above_cap} rows above sale_price 15,000,000"
 assert n_bad_zip   == 0, f"{n_bad_zip} malformed zip_code values"
+assert len(sdf_with_zip) == modern_rows + legacy_audit["legacy_rows_with_valid_zip"]
 
 # ── Step 5: Save final outputs ────────────────────────────────────────────────
 
@@ -524,3 +574,6 @@ print(
     .round(0)
     .to_string()
 )
+
+print("\nTransaction coverage by year:")
+print(sdf_with_zip.groupby("year").size().to_string())
