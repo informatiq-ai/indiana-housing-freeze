@@ -8,7 +8,21 @@ Use a separate Minnesota source adapter: immutable ZIP archives → versioned SQ
 
 The eCRV sample supports transaction prices, activity, financing mix and seller-paid-points measures. It cannot by itself establish buyer demand elasticity: completed sales omit unsold listings and do not reveal how buyers respond to asking-price reductions. Add listing data for that question, and describe rate/price/volume associations as descriptive unless an identification strategy supports causal interpretation.
 
-This PR implements the audit, schema adapters, deterministic malformed-character recovery, persistent version store, archive-level incremental ingestion, quarantine reporting and CSV exports. Automatic download, the monthly panel and a price-sensitivity model remain future work. The observed archives do not establish authoritative amendment/deletion behavior; validate those source rules before publishing research outputs.
+This PR implements the audit, schema adapters, deterministic malformed-character recovery, persistent version store, archive-level incremental ingestion, quarantine reporting and CSV exports. Automatic download, the monthly panel and a price-sensitivity model remain future work. The full archive reconciliation below measures amendment behavior directly; deletion behavior remains unobservable because the feed carries no withdrawal signal.
+
+## Full-archive reconciliation
+
+The complete 2015–2026 archive set reconciles at every grain, and the weekly feed republishes a small number of amended records. This section reports member accounting, extract spacing, revisions, and the bridge to the research funnel, measured on 2026-10-16 with parser 1.1.0 using `python3 scripts/00_mn_ecrv_pipeline.py reconcile`.
+
+The store holds 611 archives (574 for extract years 2015–2025 and 37 for 2026) containing 1,554,169 member observations of 1,549,541 distinct transactions. In every extract year, members equal validated plus quarantined records, observations equal validated records, and quarantine events equal the batch error counts. Quarantines total 631 members: 630 nonpositive sale prices and one non-XML member, concentrated in 2015–2018, which explains why 205 archives carry `incomplete` status. Windows-1252 recovery applies to 116,500 validated members.
+
+Extract spacing shows no missing week. Six consecutive-extract gaps exceed seven days, each eight or nine days, and each falls on a Tuesday or Wednesday after a Monday schedule slipped. Member counts in those delayed archives range from 0.76 to 1.45 times the median of their neighbors, consistent with a late run that absorbs the filings of a longer interval.
+
+Weekly extracts republish some amended CRVs. Of 4,628 repeat observations, 2,984 repeat the prior analytical content and 1,644 revise it, affecting 1,637 transactions (0.11%). Within the Twin Cities study window, 591 of 699,377 transactions (0.08%) were revised; the most frequent changes are property-use rows (345), gross sale price (142), parcel rows (95), and financing rows (88), and six revisions moved the sale year. The current view selects the latest-observed version, as recorded in `docs/decision_log.md`. The `revision_conflict` flag counts only conflicting versions inside one extract and does not measure this cross-extract revision.
+
+Current Twin Cities transactions in the store equal the research funnel's normalized records in every sale year from 2015 through 2025. The strict-comparable cohort is nearly empty before 2019 (7 to 35 transactions per year) because earlier schema eras do not carry the source flags that cohort requires, so strict-cohort sensitivity results describe 2019–2025 only.
+
+The reconciliation writes `ecrv_reconciliation_by_extract_year.csv`, `ecrv_extract_gaps.csv`, `ecrv_revision_summary.csv`, `ecrv_sale_year_bridge.csv`, and `ecrv_reconciliation_summary.json` to `outputs/mn/quality/`, and exits nonzero when any identity check fails.
 
 ## Repository fit
 
@@ -130,6 +144,10 @@ data/raw/mn/ecrv/<original archives>
 data/intermediate/mn/ecrv.sqlite
 data/processed/mn/ecrv_transactions.csv
 data/processed/mn/ecrv_children.csv
+data/processed/mn/research_extract/ecrv_transactions.parquet
+data/processed/mn/research_extract/ecrv_uses.parquet
+data/processed/mn/research_extract/ecrv_parcels.parquet
+data/processed/mn/research_extract/ecrv_personal_property.parquet
 data/processed/mn/panel_county_month.csv
 data/processed/mn/panel_county_month.rds
 outputs/mn/quality/
@@ -177,11 +195,12 @@ To test actual buyer price sensitivity, obtain listing-level price histories and
 | `.gitignore` | **Implemented:** Minnesota raw/intermediate/processed/quality outputs and Python caches |
 | `config/mn_ecrv.json` | **Implemented:** paths, bounded-read limits and seven-county crosswalk |
 | `scripts/mn_ecrv/schema.py` | **Implemented:** four observed schema variants, normalized fields and deterministic recovery |
-| `scripts/mn_ecrv/store.py` | **Implemented:** SQLite registry, transactional batches, observations, versions, children and latest-observed resolution |
-| `scripts/00_mn_ecrv_pipeline.py` | **Implemented:** recursive folder ingestion, year/archive selection, replay skipping and CSV export |
-| `scripts/01_mn_panel.R` | **Proposed:** Minnesota-specific monthly panel with keyed Redfin/ACS/FRED joins |
-| `scripts/02_mn_price_sensitivity.R` | **Proposed:** descriptive metrics and explicitly identified models when data permits |
-| `requirements.txt` | **Implemented:** no new ingestion dependency; Python standard library only |
+| `scripts/mn_ecrv/store.py` | **Implemented:** SQLite registry, transactional batches, observations, versions, children, latest-observed resolution, and filtered Parquet research export |
+| `scripts/00_mn_ecrv_pipeline.py` | **Implemented:** recursive folder ingestion, year/archive selection, replay skipping, compatibility CSV export, and snapshot-cached research Parquet export |
+| `scripts/research/01_prepare_transactions.py` | **Implemented:** PII-free Indiana/Minnesota transaction contract, eligibility flags, exclusions and reporting-lag evidence |
+| `scripts/research/02_build_panels.R` | **Implemented:** balanced metro panels, fixed baseline tiers and keyed Redfin/ACS/FRED/CPI joins |
+| `scripts/research/03_estimate_models.R` | **Implemented:** parallel metro models, event studies, sensitivities and pooled generalizability test |
+| `requirements.txt` | **Implemented:** pandas plus PyArrow for compressed columnar research extracts; raw XML/SQLite ingestion otherwise uses the standard library |
 | `tests/test_mn_ecrv_ingestion.py` | **Implemented:** modern/legacy adapters, child unwrapping, recovery, required validation and party-data exclusion |
 
 First collect adjacent overlapping weekly extracts plus a recent archive and the source's amendment/withdrawal documentation. Then implement the canonical store and verify replay/revision cases. Backfill the desired study years and inspect completeness before building the R panel. Automate a scheduled folder scan only after initial backfill reconciliation; acquiring files from the source virtual room is a separate concern from processing files already on disk.
@@ -193,6 +212,7 @@ First collect adjacent overlapping weekly extracts plus a recent archive and the
 python3 scripts/00_mn_ecrv_pipeline.py all
 python3 scripts/00_mn_ecrv_pipeline.py ingest --year 2015 --year 2016
 python3 scripts/00_mn_ecrv_pipeline.py export
+python3 scripts/00_mn_ecrv_pipeline.py research-export --start-year 2015 --end-year 2025
 
 python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --output outputs/mn/quality/strict.json
 
@@ -202,4 +222,4 @@ python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --allow-cp1252 --output ou
 python3 -m unittest discover -s tests -v
 ```
 
-The audit returns nonzero for unresolved member errors, duplicate keys/names or county mismatches, while saving its report. Reports are per archive: the utility does not deduplicate across archives, validate XSD, certify sale eligibility or write transaction datasets. Missing field counts are distinct from empty values; reported presence counts do not validate numeric contents. For the inspected sample, strict mode returns failure for 199 members; explicit recovery returns success for all 2,260. The ingestion and audit suites contain 19 synthetic tests.
+The audit returns nonzero for unresolved member errors, duplicate keys/names or county mismatches, while saving its report. Reports are per archive: the utility does not deduplicate across archives, validate XSD, certify sale eligibility or write transaction datasets. Missing field counts are distinct from empty values; reported presence counts do not validate numeric contents. For the inspected sample, strict mode returns failure for 199 members; explicit recovery returns success for all 2,260. The ingestion and research suites include synthetic schema, recovery, version, eligibility, panel-contract, and duplicate-resolution tests; use test discovery for the current count rather than relying on a fixed historical total.
