@@ -39,3 +39,21 @@
 - Generated/ignored artifacts are distinguished from tracked source changes.
 - No raw data, PII, credentials, or local-only paths are staged for release.
 - The release decision names blockers and remaining risks explicitly.
+
+## Journal submission package
+
+- The analysis protocol identifies which tests were pre-specified and which are
+  exploratory; substantive deviations appear in the decision log.
+- The claim ledger covers the title, abstract, manuscript, supplement, README,
+  table captions, and figure captions.
+- A clean-room rebuild has been attempted from the candidate commit and its
+  actual outcome is recorded.
+- Machine-readable tables accompany rendered tables and figures where possible.
+- The data-availability statement distinguishes redistributable artifacts from
+  restricted or separately obtained raw data and gives acquisition details.
+- Code-availability, funding, conflict-of-interest, author-contribution,
+  privacy/ethics, and AI-use statements meet the selected journal's policy.
+- The supplement contains cohort definitions, attrition/funnels, missingness,
+  event-study leads/lags, robustness results, and deviations from the protocol.
+- Citations support source definitions and external factual claims; citations
+  do not substitute for reproducing this study's own numerical results.

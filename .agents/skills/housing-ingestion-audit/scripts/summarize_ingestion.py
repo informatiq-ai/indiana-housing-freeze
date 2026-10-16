@@ -34,10 +34,14 @@ def summarize_indiana(root):
     with funnel.open(encoding="utf-8", newline="") as stream:
         funnel_rows = list(csv.DictReader(stream))
     count_fields = ("raw_target_rows", "invalid_key_rows",
-                    "exact_duplicate_rows_removed", "conflicting_rows_quarantined",
+                    "exact_duplicate_rows_removed", "status_variant_rows_removed",
+                    "conflicting_rows_quarantined",
                     "normalized_rows", "current_study_eligible_rows",
                     "strict_comparable_eligible_rows")
-    totals = {field: sum(int(row[field]) for row in funnel_rows) for field in count_fields}
+    totals = {
+        field: sum(int(row.get(field, 0)) for row in funnel_rows)
+        for field in count_fields
+    }
     result.update({
         "history_rows": rows,
         "manifest_inputs": len(json.loads(manifest.read_text(encoding="utf-8"))["inputs"]),
@@ -46,6 +50,7 @@ def summarize_indiana(root):
         "funnel_reconciles": all(
             int(row["raw_target_rows"]) == int(row["invalid_key_rows"])
             + int(row["exact_duplicate_rows_removed"])
+            + int(row.get("status_variant_rows_removed", 0))
             + int(row["conflicting_rows_quarantined"])
             + int(row["normalized_rows"])
             for row in funnel_rows
@@ -67,20 +72,28 @@ def summarize_minnesota(root):
         return result
     database = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
     try:
+        parser_version = database.execute(
+            "SELECT max(parser_version) FROM ingest_batches"
+        ).fetchone()[0]
         batches = database.execute("""
           SELECT coalesce(substr(extract_timestamp,1,4), 'unknown') AS extract_year,
                  status, count(*), sum(member_count), sum(valid_count), sum(error_count)
-          FROM ingest_batches GROUP BY 1,2 ORDER BY 1,2
-        """).fetchall()
+          FROM ingest_batches WHERE parser_version=? GROUP BY 1,2 ORDER BY 1,2
+        """, [parser_version]).fetchall()
         current_transactions = database.execute(
             "SELECT count(*) FROM current_transactions"
         ).fetchone()[0]
+        schema_counts = dict(database.execute(
+            "SELECT schema_variant, count(*) FROM current_transactions GROUP BY 1"
+        ).fetchall())
     finally:
         database.close()
     header, exported_rows = csv_header_and_rows(transactions)
     result.update({
         "batches": [dict(zip(("extract_year", "status", "batches", "members",
                               "valid", "errors"), row)) for row in batches],
+        "parser_version": parser_version,
+        "schema_counts": schema_counts,
         "current_transactions": current_transactions,
         "exported_transactions": exported_rows,
         "pii_like_columns": [column for column in header

@@ -11,6 +11,15 @@ intended audience and release boundary. A review request authorizes inspection
 and checks, not regeneration, external publication, or deployment unless the
 user also asks for those actions.
 
+For a journal-readiness review, also read
+[`docs/journal_readiness_roadmap.md`](../../../docs/journal_readiness_roadmap.md),
+[`docs/analysis_protocol.md`](../../../docs/analysis_protocol.md),
+[`docs/claim_ledger.md`](../../../docs/claim_ledger.md), and
+[`docs/reproducibility.md`](../../../docs/reproducibility.md). Use
+[`docs/decision_log.md`](../../../docs/decision_log.md) to distinguish
+pre-specified decisions from post-result changes. These files define gates and
+templates; verify implementation and artifacts independently.
+
 ## Review method
 
 1. Inventory the source snapshot, normalized data, panel, models, tables,
@@ -25,6 +34,9 @@ user also asks for those actions.
    coverage. Flag causal or elasticity language unsupported by the model/data.
 6. Run applicable automated and full-data checks only when dependencies and raw
    inputs are available. Record all skipped or unavailable checks.
+7. Check journal-package elements appropriate to the target venue: manuscript
+   and supplement consistency, data/code availability, dependency snapshot,
+   disclosure statements, and a clean-room rebuild.
 
 Return a release decision of `ready`, `ready with disclosed limitations`, or
 `not ready`, followed by blocking findings, nonblocking findings, checks run, and

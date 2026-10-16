@@ -26,10 +26,23 @@ identify buyer demand elasticity or listing-market behavior.
 - `scripts/01_data_pipeline.R`, `02_eda_descriptive_stats.R`, and
   `03_regression_hypothesis_tests.R` are the established Indiana analytical
   sequence.
+- `scripts/research/` contains the independent 2015–2025 harmonized transaction,
+  panel, and metro-comparison workflow. It must not overwrite established
+  Indiana artifacts or headline results.
 - `tests/` contains standard-library `unittest` coverage for both state
   ingestion paths.
 - `docs/minnesota_ecrv_architecture.md` is authoritative for Minnesota's current
   implementation status and known research limitations.
+- `docs/analysis_protocol.md` is the prospective contract for the longitudinal
+  estimands, cohorts, tiers, models, inference, and claim boundaries.
+- `docs/journal_readiness_roadmap.md` defines the publication gates;
+  `docs/claim_ledger.md` traces public claims to artifacts;
+  `docs/reproducibility.md` defines clean rebuild evidence; and
+  `docs/decision_log.md` records substantive methodological changes.
+
+Do not treat plans in the protocol or roadmap as completed implementation.
+`docs/methodology.md` describes implemented methods, while generated artifacts
+and the verified claim ledger govern numerical results.
 
 ## Project skills
 
@@ -80,9 +93,11 @@ making the methodological change explicit and updating the audit/tests.
   other party data. Read only analytical columns from raw files.
 - Preserve transaction grain. Aggregate child parcels/uses/financing rather
   than joining them in a way that multiplies prices or transaction counts.
-- Collapse only analytically identical duplicate transaction records.
-  Quarantine conflicting duplicates unless an authoritative revision rule has
-  been established.
+- Collapse analytically identical duplicate transaction records. For Indiana,
+  records differing only in validation/trending status follow the documented
+  null-and-flag recovery rule; quarantine conflicts in dates, prices,
+  geography, property type, or conveyance flags. Minnesota source revisions
+  follow the latest-observed extract policy documented in the architecture.
 
 ## Commands
 

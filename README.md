@@ -36,13 +36,22 @@ Source: Census ACS 2023 5-year estimates.
 
 ## Price Segmentation
 
-Price tiers are derived from k-means clustering (k = 4) on raw sale_price (with a pre-fit cap at $15M to suppress data-entry outliers), with the top two clusters collapsed due to insufficient ultra-luxury sample size (n = 112 ultra-luxury vs. 4,700 luxury). Natural breakpoints fall at approximately $380K and $1.05M.
+Reported consideration remains in `sale_price`. The pipeline also converts every
+2015–2025 transaction to `sale_price_2025` using monthly FRED CPI-U
+(`CPIAUCSL`) and the 2025 annual-average index as the base. October 2025 is
+linearly interpolated because that observation is absent from the source series;
+affected records carry `cpi_imputed = true`.
 
-| Segment | Price Range | N (2021–2025) |
+Price tiers are fitted on 2021–2025 `sale_price_2025` using k-means (k = 4),
+with the top two clusters collapsed. The constant-2025-dollar breakpoints are
+approximately $407K and $1.10M. The EDA and price regressions use real prices;
+nominal prices remain available for transaction filters and payment calculations.
+
+| Segment | Constant-2025-dollar range | N (2015–2025) |
 |---------|-------------|---------------|
-| Entry | Below $380K | 186,820 |
-| Move-up | $380K to $1.05M | 78,360 |
-| Luxury | Above $1.05M | 4,812 |
+| Entry | Below $407K | 325,091 |
+| Move-up | $407K to $1.10M | 106,952 |
+| Luxury | Above $1.10M | 6,384 |
 
 ## Identification Strategy
 
@@ -85,15 +94,17 @@ The app provides three switchable views via radio button:
 
 ## Scripts
 
-**`scripts/00_data_pipeline.py`** processes STATS Indiana SDF deed records. It loads SALEDISC files for 2021–2025, applies all arm's-length and quality filters, assigns price segments via k-means, joins SALEPARCEL zip codes, joins ZCTA-level HHI, and computes zip-level affordability ratios. Outputs: `data/processed/sdf_indiana.csv` and `data/processed/zip_median_prices.csv`.
+**`scripts/00_data_pipeline.py`** processes STATS Indiana SDF deed records for 2015–2025. It preserves the established SALEDISC processing for 2021–2025 and appends eligible, ZIP-valid 2015–2020 rows from the audited `indiana_sdf_history.csv`. Price breaks continue to be fit on the established 2021–2025 sample and are then applied to all years. It joins ZCTA-level HHI and computes ZIP-level affordability ratios. Outputs: `data/processed/sdf_indiana.csv` and `data/processed/zip_median_prices.csv`.
 
-**`scripts/00_indiana_sdf_pipeline.py`** builds a separate audited Indiana transaction history from legacy annual pipe-delimited files (`2015.txt` through `2020.txt`) and modern `SALEDISC`/`SALEPARCEL` pairs. Format detection is header-based, so later modern years are discovered automatically. It writes `data/processed/indiana_sdf_history.csv` plus a county-year filter funnel, quality events, and a hashed input manifest under `outputs/indiana/quality/`. It does not replace `sdf_indiana.csv` or run Redfin, Census, tiering, or modeling steps.
+**`scripts/00_indiana_sdf_pipeline.py`** builds the audited Indiana transaction history from legacy annual pipe-delimited files (`2015.txt` through `2020.txt`) and modern `SALEDISC`/`SALEPARCEL` pairs. Format detection is header-based, so later modern years are discovered automatically. It writes `data/processed/indiana_sdf_history.csv` plus a county-year filter funnel, quality events, and a hashed input manifest under `outputs/indiana/quality/`. The established pipeline consumes its eligible 2015–2020 rows but continues to own `sdf_indiana.csv`, Redfin/Census enrichment, tiering, and modeling inputs.
 
 **`scripts/01_data_pipeline.R`** builds the county-month panel used in all regression models. It joins Redfin listing data, Census county demographics, ZCTA HHI, and FRED mortgage rates. Computed variables include `rate_gap`, `affordability_ratio`, DiD indicators (`post`, `treated`, `did`), and per-capita transaction counts by segment. Outputs: `data/processed/panel_data.rds` and `data/processed/panel_data.csv`. Requires `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron`.
 
 **`scripts/02_eda_descriptive_stats.R`** produces Figures 1 through 10 and Table 1. It loads `panel_data.rds` and `sdf_indiana.csv` and generates descriptive statistics, time series plots, the parallel trends check, price index by segment, affordability ratios, and DOM distributions.
 
-**`scripts/03_regression_hypothesis_tests.R`** estimates all regression models and generates Figures 11 through 13 and Tables 2 through 8. Models include DOM regressions on the panel (N = 300), price models on individual deed records, triple-interaction DiD specifications for price and volume, Welch two-sample t-tests, and the Pearson correlation matrix.
+**`scripts/03_regression_hypothesis_tests.R`** estimates all regression models and generates Figures 11 through 13 and Tables 2 through 8. Models include DOM regressions on the 660-row county-month panel, price models on individual deed records, triple-interaction DiD specifications for price and volume, Welch two-sample t-tests, and the Pearson correlation matrix.
+
+**`scripts/research/`** contains the independent longitudinal workflow. It harmonizes audited Indiana and Minnesota transactions for 2015–2025, fits fixed 2015–2019 price tiers separately by metro, builds county-month transaction and listing panels, estimates matching metro-specific models, and then tests cross-metro generalizability. Generated research data and results are namespaced separately from the established Indiana analysis.
 
 **`scripts/build_simplified_geojson.py`** pre-computes `data/zip_geojson_simplified.json` from the cached Indiana ZIP GeoJSON. Run once before launching the Streamlit app, and again whenever the source GeoJSON is refreshed.
 
@@ -140,15 +151,37 @@ Days-on-market figures from Redfin are subject to delist-relist cycling and repr
 
 ## Reproducibility
 
+Research governance for the longitudinal study is documented separately from
+the established headline findings:
+
+- [Analysis protocol](docs/analysis_protocol.md) freezes the prospective sample,
+  estimands, tier construction, models, inference, and claim boundaries.
+- [Journal-readiness roadmap](docs/journal_readiness_roadmap.md) defines the
+  evidence gates that must pass before submission.
+- [Claim ledger](docs/claim_ledger.md) traces public statements to current
+  machine-readable artifacts and generating code.
+- [Reproducibility guide](docs/reproducibility.md) defines the clean rebuild and
+  release manifest.
+- [Decision log](docs/decision_log.md) preserves substantive methodological
+  choices and deviations from the frozen protocol.
+
+Planned work in these documents is not evidence that a method has been
+implemented or a result verified. `docs/methodology.md` describes implemented
+methods; release-candidate artifacts and the verified claim ledger govern
+reported numerical results.
+
 All R scripts use `here::here()` for file paths. Python scripts use `pathlib.Path` anchored to the repository root. Set `CENSUS_API_KEY` and `FRED_API_KEY` in `.Renviron` before running `01_data_pipeline.R`. The `00_data_pipeline.py` script requires STATS Indiana SDF flat files (`SALEDISC20XX.txt` and `SALEPARCEL20XX.txt`, plus legacy `2015.txt` through `2020.txt`) placed in `data/raw/in/`; these files are not redistributed here.
 
-Build the normalized Indiana history independently of the existing analysis pipeline:
+Build the audited history before running the established enriched pipeline:
 
 ```bash
 python scripts/00_indiana_sdf_pipeline.py \
   --input-dir data/raw/in \
   --output data/processed/indiana_sdf_history.csv \
   --quality-dir outputs/indiana/quality
+
+python scripts/00_data_pipeline.py
+Rscript scripts/01_data_pipeline.R
 
 # Optional inclusive range or repeated individual years
 python scripts/00_indiana_sdf_pipeline.py --year 2015:2020
@@ -169,7 +202,7 @@ personal-property and seller-concession adjustments are intentionally deferred.
 
 ## Minnesota eCRV extension
 
-See [Minnesota ingestion architecture](docs/minnesota_ecrv_architecture.md) for the weekly ZIP findings, schema mapping, malformed-record policy, Twin Cities geography and price-sensitivity research plan. The ingestion pipeline reads XML directly from ZIPs, records processed archive hashes in a local SQLite database, retains transaction versions and child rows, and exports analysis-ready CSV files. Raw archives and generated data remain excluded from Git.
+See [Minnesota ingestion architecture](docs/minnesota_ecrv_architecture.md) for the weekly ZIP findings, schema mapping, malformed-record policy, Twin Cities geography and price-sensitivity research plan. The ingestion pipeline reads XML directly from ZIPs, records processed archive hashes in a local SQLite database, and retains transaction versions and child rows. Full compatibility exports remain CSV; the longitudinal workflow materializes its seven-county, 2015–2025 research slice directly from SQLite as compressed Parquet. Raw archives and generated data remain excluded from Git.
 
 ```bash
 # Incrementally process every ZIP under data/raw/mn/ecrv and export CSVs
@@ -179,9 +212,49 @@ python3 scripts/00_mn_ecrv_pipeline.py all
 python3 scripts/00_mn_ecrv_pipeline.py ingest --year 2015 --year 2016
 python3 scripts/00_mn_ecrv_pipeline.py export
 
+# Build or reuse the filtered, snapshot-pinned Parquet research extract
+python3 scripts/00_mn_ecrv_pipeline.py research-export \
+  --start-year 2015 --end-year 2025
+
 # Python 3.11+; audit one ZIP or recursively scan a folder
 python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --output outputs/mn/quality/strict.json
 # Explicit recovery for legacy files containing Windows-1252 bytes
 python3 scripts/audit_mn_ecrv.py /path/to/weekly-zips --allow-cp1252 --output outputs/mn/quality/recovered.json
 python3 -m unittest discover -s tests -v
 ```
+
+## Longitudinal cross-metro analysis
+
+The expanded study uses 2015–2019 as its baseline, 2020–2021 as the
+pandemic/low-rate transition, and 2022–2025 as the high-rate lock-in period.
+Gross sale price remains the canonical cross-state measure. Price-tier results
+describe heterogeneity among completed transactions and are not demand
+elasticities.
+
+Run the audited state builds before the research workflow:
+
+```bash
+.venv/bin/python scripts/00_indiana_sdf_pipeline.py --input-dir data/raw/in
+.venv/bin/python scripts/00_mn_ecrv_pipeline.py all
+
+.venv/bin/python scripts/research/01_prepare_transactions.py \
+  --start-year 2015 --end-year 2025
+Rscript scripts/research/02_build_panels.R
+Rscript scripts/research/03_estimate_models.R
+```
+
+The panel build is cache-first for FRED, ACS, and Redfin inputs. A FRED API key
+is required when its cache is absent; the Census endpoint may also require a
+key. The builder accepts `CENSUS_API_KEY` or `CENSUS_APIKEY` from the environment
+or local ignored `.env`. The R
+workflow requires `dplyr`, `tidyr`, `readr`, `lubridate`, `purrr`, `stringr`,
+`fredr`, `httr`, `jsonlite`, `here`, `digest`, and `sandwich`.
+
+Generated research data are written under `data/processed/research/`. Audit,
+metro-specific, event-study, sensitivity, bootstrap, and pooled-comparison
+tables are written under `outputs/research/`; both locations are reproducible
+and ignored by Git. Set `WILD_BOOTSTRAP_REPS=99` for a model smoke test; the
+release run defaults to 9,999 repetitions.
+
+See [the longitudinal methodology](docs/longitudinal_research.md) for cohort,
+panel, inference, and claim-boundary details.
