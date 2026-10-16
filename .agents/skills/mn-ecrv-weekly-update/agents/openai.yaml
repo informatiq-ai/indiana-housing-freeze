@@ -1,0 +1,4 @@
+interface:
+  display_name: "Minnesota eCRV Weekly Update"
+  short_description: "Add new weekly Minnesota eCRV extracts and verify coverage"
+  default_prompt: "Use $mn-ecrv-weekly-update to add the new Minnesota eCRV archives and check coverage."

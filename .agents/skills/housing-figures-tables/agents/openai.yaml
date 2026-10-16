@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Figures and Tables"
+  short_description: "Produce publication figures and tables to the project's output contract"
+  default_prompt: "Use $housing-figures-tables to create this figure or table for the housing analysis."

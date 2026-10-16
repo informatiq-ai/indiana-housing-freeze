@@ -1,0 +1,4 @@
+interface:
+  display_name: "Housing Commit Staging"
+  short_description: "Group and stage changes into focused commits for the owner to commit"
+  default_prompt: "Use $housing-commit-staging to group and stage the current changes."
