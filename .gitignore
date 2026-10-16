@@ -22,6 +22,9 @@ SALEPARCEL*.txt
 # Generated Indiana longitudinal ingestion outputs
 data/processed/indiana_sdf_history.csv
 outputs/indiana/quality/
+# Regenerable 2015–2025 Indiana analysis runs (figures and model objects)
+outputs/indiana/analysis_2015_2025/
+outputs/indiana/analysis_2015_2025_real/
 
 
 # Stray R graphics device output
@@ -33,6 +36,15 @@ data/intermediate/mn/
 data/processed/mn/
 outputs/mn/quality/
 
+# Generated cross-metro longitudinal research artifacts and external caches
+data/processed/research/
+outputs/research/
+
 # Python caches
 __pycache__/
 *.py[cod]
+
+.env
+
+# Machine-local Claude Code settings (the .claude/skills symlink is tracked)
+.claude/settings.local.json
