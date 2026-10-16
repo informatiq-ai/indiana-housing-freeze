@@ -80,12 +80,24 @@ def summarize_minnesota(root):
                  status, count(*), sum(member_count), sum(valid_count), sum(error_count)
           FROM ingest_batches WHERE parser_version=? GROUP BY 1,2 ORDER BY 1,2
         """, [parser_version]).fetchall()
-        current_transactions = database.execute(
-            "SELECT count(*) FROM current_transactions"
-        ).fetchone()[0]
-        schema_counts = dict(database.execute(
-            "SELECT schema_variant, count(*) FROM current_transactions GROUP BY 1"
-        ).fetchall())
+        # Same selection rule as the current_transactions view, but ranking only
+        # narrow columns: the view carries every payload column through its
+        # window sort and takes many minutes on a full store.
+        schema_counts = dict(database.execute("""
+          SELECT schema_variant, count(*) FROM (
+            SELECT v.schema_variant, row_number() OVER (
+                     PARTITION BY v.source_key
+                     ORDER BY b.extract_timestamp DESC, b.archive_name DESC,
+                              o.member_ordinal DESC, v.version_id DESC
+                   ) AS selection_rank
+            FROM record_observations o
+            JOIN ingest_batches b USING (batch_id)
+            JOIN record_versions v USING (version_id)
+            WHERE b.status IN ('complete', 'incomplete')
+              AND v.parser_version=? AND b.parser_version=?
+          ) WHERE selection_rank=1 GROUP BY 1
+        """, [parser_version, parser_version]).fetchall())
+        current_transactions = sum(schema_counts.values())
     finally:
         database.close()
     header, exported_rows = csv_header_and_rows(transactions)
