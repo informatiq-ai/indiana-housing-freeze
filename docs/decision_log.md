@@ -192,3 +192,54 @@ choice look pre-specified.
   `outputs/research/quality/msp_core_city_zip_concordance.csv`.
 - **Protocol classification:** pre-specified sensitivity, added before the
   longitudinal release candidate.
+
+### 2026-10-16: Count each Indiana sale once in the established analysis
+
+- **Status:** adopted
+- **Scope:** established 2021–2025 Indiana squeeze analysis and its outputs
+- **Decision:** Keep one row per `SDF_ID` in `sdf_indiana.csv`, taking the first
+  row in file order, and refit the k-means price segments on the distinct sales.
+- **Reason:** The STATS Indiana `SALEDISC` files repeat an `SDF_ID` when one sale
+  is filed on several forms. The copies differ in form totals, fees, and
+  validation fields; 50,265 of the 50,345 repeated sales carry the same date and
+  price on every copy. The published sample counted every row, so 269,992 rows
+  held 201,754 sales. The repeats fell mostly on the suburbs: 50.7% of Hamilton
+  rows, 30.0% of Hendricks, 18.7% of Johnson, 7.4% of Boone, and 2.4% of Marion
+  were copies. No `SDF_ID` repeats across annual files.
+- **Consequences:** The refit breaks are $363,424 and $1,047,851 (previously
+  $379,523 and $1,048,090). The published conclusions hold and strengthen. The
+  move-up rate slope is −5.0% per percentage point against −0.9% for entry, a
+  5.6× multiplier (previously −4.9%, −1.1%, and 4.5×). The suburb × post ×
+  move-up price interaction is +17.2% (previously +16.2%), and the move-up
+  volume interaction is −340 sales per month with p < 0.001 (previously −176,
+  p = 0.05). The README and the regenerated figures and tables report the
+  corrected values.
+- **Implementation:** `scripts/00_data_pipeline.py`, which also writes
+  `data/processed/price_segment_breaks_indiana.json` so the Redfin panel uses
+  the same breaks.
+- **Protocol classification:** correction to the established analysis.
+
+### 2026-10-16: Restore the published method for the established squeeze analysis
+
+- **Status:** adopted
+- **Scope:** established 2021–2025 squeeze scripts (`00`–`03`); supersedes the
+  2026-09-22 constant-dollar decision for that analysis only
+- **Decision:** Run the established scripts with the published method: the
+  2021–2025 window, nominal sale prices, k-means segments fit on nominal 2021–2025
+  prices, and the published models. Indiana and the Twin Cities run from the same
+  scripts through `scripts/squeeze_study.R`, which changes only geography, input
+  files, and source labels.
+- **Reason:** The constant-dollar revision also extended the window to
+  2015–2025 and refit the segments, so the scripts no longer reproduced the
+  published results. Rerunning the published scripts on the published input
+  reproduced them exactly, which establishes the published method as the
+  baseline for the cross-metro replication.
+- **Alternatives considered:** Keep the constant-dollar 2015–2025 version as the
+  established analysis; keep both behind a setting.
+- **Consequences:** Constant-dollar 2015–2025 prices remain in the longitudinal
+  workflow. The constant-dollar version of the established scripts remains in
+  the Git history at commit `08d636f`.
+- **Implementation:** `scripts/01_data_pipeline.R`,
+  `scripts/02_eda_descriptive_stats.R`, `scripts/03_regression_hypothesis_tests.R`,
+  `scripts/squeeze_study.R`, and `tests/test_squeeze_study.R`.
+- **Protocol classification:** correction to the established analysis.
