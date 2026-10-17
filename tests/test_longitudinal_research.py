@@ -8,6 +8,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "research"))
 from longitudinal import (
     OUTPUT_COLUMNS, classify_core_city, prepare_indiana, prepare_minnesota, regime_for_year,
+    summarize_mn_uses,
 )
 
 
@@ -157,6 +158,36 @@ class LongitudinalResearchTests(unittest.TestCase):
             self.assertIn("related_or_unknown", result["exclusion_reasons_strict"])
             self.assertIn("deed_type_unknown", result["exclusion_reasons_strict"])
 
+
+    def test_minnesota_single_family_rejects_other_uses_in_both_formats(self):
+        # Each schema leaves the other schema's code columns null.
+        uses = pd.DataFrame([
+            ("modern_house", "before", "RESID", "SINGLEFAM", None, None),
+            ("modern_condo", "before", "RESID", "RESCONDO", None, None),
+            ("legacy_house", "before", None, None, "RES", "HOUSESGL"),
+            ("legacy_condo", "before", None, None, "RES", "CONDODW"),
+            ("mixed_parcels", "before", "RESID", "SINGLEFAM", None, None),
+            ("mixed_parcels", "before", "OFFICE", "GENOFFICE", None, None),
+            ("after_only_change", "before", "RESID", "SINGLEFAM", None, None),
+            ("after_only_change", "after", "VACANT", "VACRES", None, None),
+        ], columns=[
+            "source_key", "use_timing", "tier1Cde", "tier2Cde",
+            "propertyTypeCode", "propertyUseCode",
+        ])
+        expected = {
+            "modern_house": True, "modern_condo": False, "legacy_house": True,
+            "legacy_condo": False, "mixed_parcels": False, "after_only_change": True,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            uses.to_csv(root / "ecrv_uses.csv", index=False)
+            uses.to_parquet(root / "ecrv_uses.parquet", index=False)
+            keys = set(uses["source_key"])
+            for path in (root / "ecrv_uses.csv", root / "ecrv_uses.parquet"):
+                summary = summarize_mn_uses(path, keys).set_index("source_key")
+                self.assertEqual(
+                    summary["single_family"].astype(bool).to_dict(), expected, path.suffix
+                )
 
     def test_core_city_classification(self):
         counties = pd.Series({

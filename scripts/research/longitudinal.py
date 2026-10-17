@@ -265,12 +265,16 @@ def summarize_mn_uses(path: Path, source_keys: set[str] | None = None) -> pd.Dat
     )
     _require_columns(uses, required, path)
     before = uses[uses["use_timing"].str.lower() == "before"].copy()
+    # Each schema leaves the other schema's code fields null. Nullable string
+    # comparisons return NA there, and groupby all() skips NA, so a condo row
+    # would otherwise count as single-family. Missing codes must compare False.
+    def _code(column: str, value: str) -> pd.Series:
+        return before[column].eq(value).fillna(False).astype(bool)
+
     before["_single_family_row"] = (
-        (before["propertyTypeCode"] == "RES")
-        & (before["propertyUseCode"] == "HOUSESGL")
+        _code("propertyTypeCode", "RES") & _code("propertyUseCode", "HOUSESGL")
     ) | (
-        (before["tier1Cde"] == "RESID")
-        & (before["tier2Cde"] == "SINGLEFAM")
+        _code("tier1Cde", "RESID") & _code("tier2Cde", "SINGLEFAM")
     )
     legacy = (
         before["propertyTypeCode"].astype("string").fillna("") + ":"
