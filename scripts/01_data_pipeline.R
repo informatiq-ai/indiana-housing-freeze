@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Indiana Move-Up Housing Squeeze — Panel Data Construction, 2015–2025
+# Indiana Move-Up Housing Squeeze — Panel Data Construction
 #
 # Research Question: Does the mortgage rate lock-in effect disproportionately
 # impact move-up ($380K–$1.05M) homes in Indianapolis suburbs vs Marion County?
@@ -12,19 +12,25 @@
 #   - Redfin county market tracker (DOM, sale-to-list, median price)
 #   - STATS Indiana SDF deed records (transaction-level price band counts)
 #   - FRED MORTGAGE30US (30-yr fixed mortgage rate)
-#   - FRED CPIAUCSL (monthly CPI-U; prices expressed in constant 2025 dollars)
 #   - Census ACS 2023 5-year (median HHI, population — county and ZIP level)
 #
 # Output: panel_data.rds / panel_data.csv
 #         zip_median_prices.csv (with ZCTA-level HHI)
 #
 # Unit of analysis: county × month cell
-#   5 counties × 132 months = 660 rows
+#   5 counties × 60 months = 300 rows
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Package setup ─────────────────────────────────────────────────────────────
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tidyverse, fredr, httr, jsonlite, here, scales)
+
+# ── Study selection ───────────────────────────────────────────────────────────
+# SQUEEZE_STUDY selects geography and inputs (see squeeze_study.R); the
+# default "indiana" builds the published Indianapolis panel.
+source(here::here("scripts/squeeze_study.R"))
+study <- squeeze_study_settings()
+cat("Squeeze study:", study$name, "\n")
 
 # ── API keys (stored in .Renviron) ────────────────────────────────────────────
 CENSUS_API_KEY <- Sys.getenv("CENSUS_API_KEY")
@@ -37,16 +43,12 @@ fredr_set_key(Sys.getenv("FRED_API_KEY"))
 # Downloaded nationally, pre-filtered to 5 Indianapolis-area counties:
 #   Marion (metro/control), Hamilton, Boone, Hendricks, Johnson (suburbs/treated)
 # All 5 property types present — filter to Single Family Residential only
-# Year range in file: 2012–2026 — filter to 2015–2025
+# Year range in file: 2012–2026 — filter to 2021–2025 (full rate cycle)
 # ══════════════════════════════════════════════════════════════════════════════
 
-target_counties <- c("Boone County, IN", "Hamilton County, IN",
-                     "Hendricks County, IN", "Marion County, IN",
-                     "Johnson County, IN")
-study_start_year <- 2015L
-study_end_year   <- 2025L
+target_counties <- study$redfin_regions
 
-redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "NA", "--")) %>%
+redfin <- read_csv(here::here(study$redfin_file), na = c("", "NA", "--")) %>%
   rename_with(~ str_to_lower(str_replace_all(., "[ /]", "_"))) %>%
   mutate(
     period_begin      = as.Date(period_begin),
@@ -56,8 +58,8 @@ redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "
       as.character(median_sale_price), "[$,]"))
   ) %>%
   filter(
-    region        %in% target_counties,               # restrict to 5-county study area
-    year          >= study_start_year, year <= study_end_year,
+    region        %in% target_counties,               # restrict to the study counties
+    year          >= 2021, year <= 2025,               # rate cycle window
     property_type == "Single Family Residential",      # exclude condo/townhouse
     !is.na(median_sale_price),
     !is.na(median_dom),
@@ -67,7 +69,8 @@ redfin <- read_csv(here::here("data/processed/redfin_indiana.csv"), na = c("", "
   )
 
 cat("Redfin rows after filter:", nrow(redfin), "\n")
-cat("Expected: ~660 (5 counties × 132 months)\n")
+cat("Expected: ~", length(target_counties) * 60, " (", length(target_counties),
+    " counties × 60 months)\n", sep = "")
 redfin %>% count(region, property_type) %>% print()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -79,8 +82,8 @@ redfin %>% count(region, property_type) %>% print()
 # This step covers county-level controls only.
 # ══════════════════════════════════════════════════════════════════════════════
 
-if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
-  county_census <- read_csv(here::here("data/processed/census_county_controls.csv"),
+if (file.exists(here::here(study$census_cache))) {
+  county_census <- read_csv(here::here(study$census_cache),
                             show_col_types = FALSE)
   income_lookup <- county_census %>% select(county, median_hhi)
   pop_lookup    <- county_census %>% select(county, population)
@@ -94,15 +97,15 @@ if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
   income_resp <- GET(paste0(
     "https://api.census.gov/data/2023/acs/acs5",
     "?get=NAME,B19013_001E",
-    "&for=county:011,057,063,081,097",
-    "&in=state:18",
+    "&for=county:", study$census_counties,
+    "&in=state:", study$census_state,
     "&key=", CENSUS_API_KEY
   ))
   income_raw    <- fromJSON(content(income_resp, "text", encoding = "UTF-8"))
   income_lookup <- as_tibble(income_raw[-1, ], .name_repair = "minimal") %>%
     setNames(income_raw[1, ]) %>%
     transmute(
-      county     = str_remove(NAME, " County, Indiana"),
+      county     = str_remove(NAME, study$census_suffix),
       median_hhi = as.numeric(B19013_001E)
     )
   
@@ -110,23 +113,24 @@ if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
   pop_resp <- GET(paste0(
     "https://api.census.gov/data/2023/acs/acs5",
     "?get=NAME,B01003_001E",
-    "&for=county:011,057,063,081,097",
-    "&in=state:18",
+    "&for=county:", study$census_counties,
+    "&in=state:", study$census_state,
     "&key=", CENSUS_API_KEY
   ))
   pop_raw    <- fromJSON(content(pop_resp, "text", encoding = "UTF-8"))
   pop_lookup <- as_tibble(pop_raw[-1, ], .name_repair = "minimal") %>%
     setNames(pop_raw[1, ]) %>%
     transmute(
-      county     = str_remove(NAME, " County, Indiana"),
+      county     = str_remove(NAME, study$census_suffix),
       population = as.numeric(B01003_001E)
     )
   
   county_census <- income_lookup %>%
     left_join(pop_lookup, by = "county")
   
-  write_csv(county_census, here::here("data/processed/census_county_controls.csv"))
-  cat("Saved census_county_controls.csv\n")
+  dir.create(dirname(here::here(study$census_cache)), recursive = TRUE, showWarnings = FALSE)
+  write_csv(county_census, here::here(study$census_cache))
+  cat("Saved", study$census_cache, "\n")
   print(county_census)
 }
 
@@ -149,7 +153,7 @@ if (file.exists(here::here("data/processed/census_county_controls.csv"))) {
 
 rates_raw <- fredr(
   series_id         = "MORTGAGE30US",
-  observation_start = as.Date("2015-01-01"),
+  observation_start = as.Date("2021-01-01"),
   observation_end   = as.Date("2025-12-31"),
   frequency         = "m"
 ) %>%
@@ -163,23 +167,6 @@ cat("Mortgage rates loaded:", nrow(rates_raw), "months\n")
 cat("Rate range:", round(min(rates_raw$mortgage_rate), 2),
     "% –", round(max(rates_raw$mortgage_rate), 2), "%\n")
 
-# CPI is materialized by 00_data_pipeline.py from FRED CPIAUCSL. It contains a
-# complete 2015–2025 monthly grid and flags any bounded interpolation (October
-# 2025 is absent from the source release because of the appropriations lapse).
-cpi_monthly <- read_csv(
-  here::here("data/processed/cpi_u_monthly_2015_2025.csv"),
-  show_col_types = FALSE
-) %>%
-  mutate(year = as.integer(year), month = as.integer(month))
-
-cpi_2025_base <- cpi_monthly %>%
-  filter(year == 2025L) %>%
-  summarise(value = mean(cpi)) %>%
-  pull(value)
-
-stopifnot(nrow(cpi_monthly) == 132L, !is.na(cpi_2025_base))
-cat("2025 annual-average CPI-U base:", round(cpi_2025_base, 3), "\n")
-
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 5: STATS INDIANA SDF — TRANSACTION COUNTS BY PRICE BAND
 # Source: Indiana Dept of Local Government Finance / STATS Indiana
@@ -190,8 +177,8 @@ cat("2025 annual-average CPI-U base:", round(cpi_2025_base, 3), "\n")
 # step expects price-bounded input and would drop any contaminated rows if reintroduced.
 # ══════════════════════════════════════════════════════════════════════════════
 
-sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"), show_col_types = FALSE) %>%
-  filter(!(price_segment == "luxury" & sale_price_2025 > 15000000))
+sdf_raw <- read_csv(here::here(study$sdf_file), show_col_types = FALSE) %>%
+  filter(!(price_segment == "luxury" & sale_price > 15000000))
 
 sdf_counts <- sdf_raw %>%
   mutate(price_segment = factor(price_segment,
@@ -199,14 +186,12 @@ sdf_counts <- sdf_raw %>%
   group_by(county, year, month, price_segment) %>%
   summarise(
     transactions          = n(),
-    median_sale_price_sdf = median(sale_price_2025, na.rm = TRUE),
-    median_sale_price_sdf_nominal = median(sale_price, na.rm = TRUE),
+    median_sale_price_sdf = median(sale_price, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   pivot_wider(
     names_from  = price_segment,
-    values_from = c(transactions, median_sale_price_sdf,
-                    median_sale_price_sdf_nominal),
+    values_from = c(transactions, median_sale_price_sdf),
     values_fill = 0
   ) %>%
   mutate(
@@ -217,35 +202,32 @@ sdf_counts <- sdf_raw %>%
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 6: BUILD PANEL DATA — JOIN ALL SOURCES
-# Unit of analysis: county × month (660 rows = 5 counties × 132 months)
+# Unit of analysis: county × month (300 rows = 5 counties × 60 months)
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Segment breaks fit on the study's transaction records (nominal dollars)
+redfin_breaks <- squeeze_redfin_breaks(study)
 
 panel_data <- redfin %>%
   mutate(
     # Clean county name from Redfin region field
-    county = str_remove(region, " County, IN"),
+    county = str_remove(region, study$redfin_suffix),
     
-    median_sale_price_nominal = median_sale_price,
-
-    # Geography: Marion = metro core (control), suburbs = treated
-    # Rationale: Marion buyers are necessity-driven; suburban buyers are
-    # move-up buyers most exposed to rate lock-in payment shock
-    geography = if_else(county == "Marion", "metro", "suburb") %>% factor()
-  ) %>%
-  left_join(cpi_monthly %>% select(year, month, cpi, cpi_imputed),
-            by = c("year", "month")) %>%
-  mutate(
-    median_sale_price_2025 = median_sale_price_nominal * cpi_2025_base / cpi,
-
-    # Price segment from the real Redfin county median using the 2025-dollar
-    # k-means breaks derived from transaction records.
+    # Price segment from Redfin county median using the study's k-means breaks
+    # (fit on the transaction records by the Python pipeline)
     # Limitation: county median can shift between segments as prices appreciate
     # SDF transaction-level data resolves this in regression analysis
     price_segment = case_when(
-      median_sale_price_2025 <  407000  ~ "entry",
-      median_sale_price_2025 <= 1097000 ~ "move_up",
+      median_sale_price <  redfin_breaks[1] ~ "entry",
+      median_sale_price <= redfin_breaks[2] ~ "move_up",
       TRUE                         ~ "luxury"
-    ) %>% factor(levels = c("entry", "move_up", "luxury"))
+    ) %>% factor(levels = c("entry", "move_up", "luxury")),
+    
+    # Geography: core counties = metro (control), suburbs = treated
+    # (Indiana: Marion; Twin Cities: Hennepin and Ramsey)
+    # Rationale: Marion buyers are necessity-driven; suburban buyers are
+    # move-up buyers most exposed to rate lock-in payment shock
+    geography = if_else(county %in% study$core_counties, "metro", "suburb") %>% factor()
   ) %>%
   left_join(rates_raw,     by = c("year", "month")) %>%
   left_join(income_lookup, by = "county") %>%
@@ -258,7 +240,7 @@ panel_data <- redfin %>%
     # Affordability ratio: monthly payment as share of median monthly income
     # Captures income constraint mechanism in Marion County
     # Formula: 30-yr fixed amortization on 80% LTV
-    monthly_payment = (median_sale_price_nominal * 0.80 *
+    monthly_payment = (median_sale_price * 0.80 *
                          (mortgage_rate / 1200 *
                             (1 + mortgage_rate / 1200)^360) /
                          ((1 + mortgage_rate / 1200)^360 - 1)),
@@ -301,7 +283,7 @@ cat("\nZip affordability rate (FRED end-of-study):",
 # ── Load zip-level data for affordability enrichment ─────────────────────────
 # hhi_zcta.csv was produced by 00_data_pipeline.py (Step 3c) and is already
 # joined into zip_median_prices.csv, so zcta_hhi is available directly.
-zip_data <- read_csv(here::here("data/processed/zip_median_prices.csv"),
+zip_data <- read_csv(here::here(study$zip_prices_file),
                      show_col_types = FALSE) %>%
   filter(zip_code != 0) %>%
   mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0"))
@@ -329,8 +311,8 @@ zip_data_enriched %>%
   ) %>%
   print()
 
-write_csv(zip_data_enriched, here::here("data/processed/zip_median_prices.csv"))
-cat("Saved data/processed/zip_median_prices.csv\n")
+write_csv(zip_data_enriched, here::here(study$zip_prices_file))
+cat("Saved", study$zip_prices_file, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 7: SANITY CHECKS
@@ -352,8 +334,7 @@ panel_data %>%
 cat("\n── Rate gap distribution by era ─────────────────────────────────────────\n")
 panel_data %>%
   mutate(era = case_when(
-    year <= 2019             ~ "Pre-pandemic baseline (2015–19)",
-    year <= 2021             ~ "Pandemic / low-rate (2020–21)",
+    year <= 2021             ~ "Baseline (2021)",
     year == 2022             ~ "Rate shock (2022)",
     year %in% c(2023, 2024) ~ "Elevated plateau (2023–24)",
     year == 2025             ~ "Persistent high (2025)"
@@ -385,8 +366,8 @@ cat("\n── DiD group sizes ────────────────�
 panel_data %>%
   count(treated, post) %>%
   mutate(group = case_when(
-    treated == 0 & post == 0 ~ "Marion pre-shock  (control, pre)",
-    treated == 0 & post == 1 ~ "Marion post-shock (control, post)",
+    treated == 0 & post == 0 ~ paste(study$core_cat_label, "pre-shock  (control, pre)"),
+    treated == 0 & post == 1 ~ paste(study$core_cat_label, "post-shock (control, post)"),
     treated == 1 & post == 0 ~ "Suburbs pre-shock  (treated, pre)",
     treated == 1 & post == 1 ~ "Suburbs post-shock (treated, post)"
   )) %>%
@@ -399,9 +380,10 @@ cat("\n── Panel dimensions:", nrow(panel_data), "rows ×", ncol(panel_data),
 # STEP 8: SAVE
 # ══════════════════════════════════════════════════════════════════════════════
 
-saveRDS(panel_data, here::here("data/processed/panel_data.rds"))    # preserves factor levels and types
-write_csv(panel_data, here::here("data/processed/panel_data.csv"))  # portable for inspection and sharing
+dir.create(dirname(here::here(study$panel_rds)), recursive = TRUE, showWarnings = FALSE)
+saveRDS(panel_data, here::here(study$panel_rds))    # preserves factor levels and types
+write_csv(panel_data, here::here(study$panel_csv))  # portable for inspection and sharing
 
-cat("\nSaved: data/processed/panel_data.rds + data/processed/panel_data.csv\n")
+cat("\nSaved:", study$panel_rds, "+", study$panel_csv, "\n")
 cat("Downstream scripts: 02_eda_descriptive_stats.R,",
     "03_regression_hypothesis_tests.R\n")

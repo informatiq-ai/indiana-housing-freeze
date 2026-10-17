@@ -51,3 +51,6 @@ __pycache__/
 
 # Local prohibited-term lists for skill checkers (names stay out of tracked files)
 .agents/skills/**/*.local.txt
+
+# Regenerable Twin Cities squeeze replication run (figures, tables, comparison)
+outputs/mn/squeeze_2021_2025/

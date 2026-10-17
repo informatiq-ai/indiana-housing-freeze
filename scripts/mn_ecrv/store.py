@@ -251,6 +251,7 @@ def export_research_parquet(
     filenames = (
         "ecrv_transactions.parquet", "ecrv_uses.parquet",
         "ecrv_parcels.parquet", "ecrv_personal_property.parquet",
+        "ecrv_addresses.parquet",
     )
     if reuse_if_current and manifest_path.exists() and all(
         (processed_dir / filename).exists() for filename in filenames
@@ -326,6 +327,10 @@ def export_research_parquet(
             ("id", string), ("selected", string),
             ("propertyDescription", string), ("propertyValue", string),
         ]),
+        "addresses": pa.schema([
+            ("version_id", string), ("source_key", string), ("ordinal", integer),
+            ("id", string), ("city", string), ("zip", string),
+        ]),
     }
     child_fields = {
         "uses": ("use", ("use_timing", "id", "tier1Cde", "tier2Cde", "tier3Cde",
@@ -334,6 +339,8 @@ def export_research_parquet(
         "personal_property": (
             "personal_property", ("id", "selected", "propertyDescription", "propertyValue")
         ),
+        # Property city/township code and ZIP only; street lines stay in the store.
+        "addresses": ("address", ("id", "city", "zip")),
     }
     counts = {}
     try:

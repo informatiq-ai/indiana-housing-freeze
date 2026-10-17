@@ -15,9 +15,9 @@
 #   specification: base, controls, interact, county_fe, twoway_fe, simple, fe, triple
 #
 # Unit of analysis:
-#   Redfin panel:     County-month cell (5 counties × 132 months;
+#   Redfin panel:     County-month cell (5 counties × 60 months;
 #                     nrow(panel_data) printed at runtime via cat())
-#   SDF transactions: Individual deed record (study window 2015–2025;
+#   SDF transactions: Individual deed record (study window 2021–2025;
 #                     nrow(sdf) printed at runtime via cat())
 #
 # Key methodological notes:
@@ -26,7 +26,7 @@
 #   2. Marion income constraint (median HHI carried in `marion_hhi`)
 #      means DiD is a conservative lower bound on the true suburban
 #      treatment effect
-#   3. DOM may differ from property-level cumulative marketing time
+#   3. DOM subject to delist-relist gaming — lower bound caveat
 #   4. luxury tier driven by thin market volatility, not rate sensitivity
 #   5. OVB candidates: Hamilton County new construction (Eli Lilly/Amazon),
 #      school district premiums (Carmel/Fishers), corporate relocations
@@ -37,25 +37,13 @@ if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tidyverse, modelsummary, lmtest, sandwich, scales, webshot2,
                here, sf, tigris, ggrepel)
 
-# Set INDIANA_ANALYSIS_OUTPUT_ROOT to generate an isolated analysis run without
-# replacing the published outputs. The default preserves the historical paths.
-output_setting <- Sys.getenv("INDIANA_ANALYSIS_OUTPUT_ROOT", "")
-analysis_output_root <- if (!nzchar(output_setting)) {
-  here::here("outputs")
-} else if (grepl("^/", output_setting)) {
-  output_setting
-} else {
-  here::here(output_setting)
-}
-figures_dir <- file.path(analysis_output_root, "figures")
-tables_dir <- file.path(analysis_output_root, "tables")
-models_dir <- file.path(analysis_output_root, "models")
-dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(tables_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
-figure_path <- function(filename) file.path(figures_dir, filename)
-table_path <- function(filename) file.path(tables_dir, filename)
-model_path <- function(filename) file.path(models_dir, filename)
+# SQUEEZE_STUDY selects geography, inputs, and labels (see squeeze_study.R);
+# the default "indiana" writes the published outputs.
+source(here::here("scripts/squeeze_study.R"))
+study <- squeeze_study_settings()
+analysis_output_root <- squeeze_output_root(study)
+dir.create(file.path(analysis_output_root, "figures"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(analysis_output_root, "tables"), recursive = TRUE, showWarnings = FALSE)
 
 # ── Analysis constants ────────────────────────────────────────────────────────
 RATE_BASELINE <- 3.0     # 2021 avg 30-yr fixed rate used as lock-in baseline
@@ -64,19 +52,11 @@ MIN_PRICE     <- 50000   # $50K — removes implausible deed transfers
 LTV_RATIO     <- 0.80    # 80% LTV assumption for affordability calculation
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-panel_data <- readRDS(here::here("data/processed/panel_data.rds")) %>%
-  mutate(
-    median_sale_price_nominal = median_sale_price,
-    median_sale_price = median_sale_price_2025
-  )
+panel_data <- readRDS(here::here(study$panel_rds))
 
-sdf_raw <- read_csv(here::here("data/processed/sdf_indiana.csv"),
+sdf_raw <- read_csv(here::here(study$sdf_file),
                     show_col_types = FALSE) %>%
-  mutate(
-    sale_price_nominal = sale_price,
-    sale_price = sale_price_2025
-  ) %>%
-  filter(!(price_segment == "luxury" & sale_price_nominal > luxury_CAP))
+  filter(!(price_segment == "luxury" & sale_price > luxury_CAP))
 
 # ── Factor releveling — entry tier and metro as reference groups ──────────────
 panel_data <- panel_data %>%
@@ -119,7 +99,7 @@ sdf <- sdf_raw %>%
   mutate(
     treated = if_else(geography == "suburb", 1L, 0L),
     did     = treated * post,
-    monthly_payment = (sale_price_nominal * LTV_RATIO *
+    monthly_payment = (sale_price * LTV_RATIO *
                          (mortgage_rate / 1200 *
                             (1 + mortgage_rate / 1200)^360) /
                          ((1 + mortgage_rate / 1200)^360 - 1)),
@@ -130,8 +110,7 @@ sdf <- sdf_raw %>%
     price_segment       = relevel(price_segment,       ref = "entry"),
     geography           = relevel(factor(geography),   ref = "metro")
   ) %>%
-  filter(!is.na(rate_gap), !is.na(sale_price),
-         sale_price_nominal > MIN_PRICE)
+  filter(!is.na(rate_gap), !is.na(sale_price), sale_price > MIN_PRICE)
 
 n_sdf   <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 n_label <- n_sdf
@@ -166,13 +145,9 @@ current_rate  <- round(latest_row$mortgage_rate[1], 1)
 peak_gap_pp   <- round(max(panel_data$rate_gap, na.rm = TRUE), 1)
 peak_rate_pct <- round(peak_gap_pp + RATE_BASELINE, 1)
 
-# Marion HHI carried forward from panel_data for any narrative references
-marion_hhi <- panel_data %>%
-  filter(county == "Marion") %>%
-  pull(median_hhi) %>%
-  first()
-marion_hhi_short <- paste0("$", formatC(round(marion_hhi / 1000), format = "f",
-                                        digits = 0, big.mark = ","), "K")
+# Core-county HHI carried forward from panel_data for narrative references
+# (Indiana: Marion, formatted "$63K"; Twin Cities: one value per core county)
+marion_hhi_short <- core_hhi_label(panel_data, study)
 
 cat("Unit of analysis 1: County-month cell —", nrow(panel_data), "obs\n")
 cat("Unit of analysis 2: Individual deed record —", nrow(sdf), "transactions\n\n")
@@ -208,14 +183,14 @@ sdf %>%
                paste0("$", midlux_break_lbl))
   ) +
   labs(
-    title    = "Distribution of Single Family Residential Real Sale Prices",
-    subtitle = paste0("Constant 2025 dollars, log scale | Indianapolis metro ", year_range_label,
+    title    = "Distribution of Single Family Residential Sale Prices",
+    subtitle = paste0("Log scale | ", study$metro_label, " ", year_range_label,
                       " | N = ", n_label, " transactions"),
-    x       = "Real sale price (2025 dollars, log scale)",
+    x       = "Sale price (log scale)",
     y       = "Count of transactions",
     caption = paste0(
-      "Source: STATS Indiana SDF deed records.\n",
-      "Real sale prices are right-skewed. Log transformation normalizes the distribution.\n",
+      "Source: ", study$sdf_source_short, ".\n",
+      "Raw sale prices are right-skewed. Log transformation normalizes the distribution.\n",
       "Median ", median_label, " reflects entry-tier dominance (",
       entry_pct, "% of transactions)."
     )
@@ -231,8 +206,8 @@ sdf %>%
     panel.grid.minor      = element_blank()
   )
 
-ggsave(figure_path("fig11_histogram_price.png"), width = 9, height = 5, dpi = 300)
-ggsave(figure_path("fig11_histogram_price.pdf"), width = 9, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig11_histogram_price.png"), width = 9, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig11_histogram_price.pdf"), width = 9, height = 5)
 cat("Saved fig11_histogram_price.png/.pdf — median:", median_label, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -241,7 +216,7 @@ cat("Saved fig11_histogram_price.png/.pdf — median:", median_label, "\n")
 # Illustrates two-mechanism hypothesis: Marion clusters bottom-left (income-constrained), Hamilton top-right (rate lock-in exposed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-fig10_stats <- readRDS(model_path("fig10_correlation_stats.rds"))
+fig10_stats <- readRDS(squeeze_model_path(study, "fig10_correlation_stats.rds"))
 cat("ZIP-level HHI-price correlation: r =", fig10_stats$r,
     "| R² =", fig10_stats$r2,
     "| N =", fig10_stats$n_zip, "zip codes\n\n")
@@ -318,7 +293,7 @@ seg_results <- sdf %>%
 
 geo_results <- sdf %>%
   mutate(Group = if_else(geography == "metro",
-                         "Marion County (metro)", "Suburbs (treated)")) %>%
+                         study$core_label, "Suburbs (treated)")) %>%
   group_by(Group) %>%
   summarise(
     N_Pre      = formatC(sum(post == 0), format = "f", digits = 0, big.mark = ","),
@@ -367,19 +342,19 @@ datasummary_df(
     "H\u2080: \u03bc_pre = \u03bc_post \u00b7 ",
     "H\u2081: \u03bc_pre \u2260 \u03bc_post (two-tailed) \u00b7 ",
     "Welch t-test (unequal variances) \u00b7 ",
-    "Pre = rate_gap < 2.0 (2015\u2013mid-2022) \u00b7 Post = rate_gap \u2265 2.0 (mid-2022\u20132025) \u00b7 ",
+    "Pre = rate_gap < 2.0 (early 2021\u2013mid-2022) \u00b7 Post = rate_gap \u2265 2.0 (mid-2022\u20132025) \u00b7 ",
     "Means transformed back to dollars \u00b7 N = ", n_label,
     " \u00b7 *** p<0.001 ** p<0.01 * p<0.05"
   ),
-  output = table_path("table2_hypothesis_test.html")
+  output = file.path(analysis_output_root, "tables/table2_hypothesis_test.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", table_path("table2_hypothesis_test.html")),
-  file  = table_path("table2_hypothesis_test.png"),
+  url   = paste0("file://", file.path(analysis_output_root, "tables/table2_hypothesis_test.html")),
+  file  = file.path(analysis_output_root, "tables/table2_hypothesis_test.png"),
   delay = 2, zoom = 1.5, vwidth = 1200
 )
-file.remove(table_path("table2_hypothesis_test.html"))
+file.remove(file.path(analysis_output_root, "tables/table2_hypothesis_test.html"))
 cat("Saved table2_hypothesis_test.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -434,14 +409,14 @@ datasummary_correlation(
     "Aggregation to ZIP code smooths this noise, revealing the income-price relationship. ",
     "Both values are correct at their respective units of analysis."
   ),
-  output = table_path("table3_correlation.html")
+  output = file.path(analysis_output_root, "tables/table3_correlation.html")
 )
 webshot2::webshot(
-  url   = paste0("file://", table_path("table3_correlation.html")),
-  file  = table_path("table3_correlation.png"),
+  url   = paste0("file://", file.path(analysis_output_root, "tables/table3_correlation.html")),
+  file  = file.path(analysis_output_root, "tables/table3_correlation.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-file.remove(table_path("table3_correlation.html"))
+file.remove(file.path(analysis_output_root, "tables/table3_correlation.html"))
 cat("Saved outputs/tables/table3_correlation.png\n")
 
 se_table <- sdf %>%
@@ -469,15 +444,15 @@ datasummary_df(
   title  = "Table 4: Standard Error of Log Sale Price by Price Segment",
   notes  = paste0("SE = SD / \u221aN \u00b7 95% CI = mean \u00b1 1.96 \u00d7 SE \u00b7 ",
                   "DV = log sale price \u00b7 N = ", n_label),
-  output = table_path("table4_standard_error.html"),
+  output = file.path(analysis_output_root, "tables/table4_standard_error.html"),
   fmt    = 3
 )
 webshot2::webshot(
-  url   = paste0("file://", table_path("table4_standard_error.html")),
-  file  = table_path("table4_standard_error.png"),
+  url   = paste0("file://", file.path(analysis_output_root, "tables/table4_standard_error.html")),
+  file  = file.path(analysis_output_root, "tables/table4_standard_error.png"),
   delay = 2, zoom = 1.5, vwidth = 1000
 )
-file.remove(table_path("table4_standard_error.html"))
+file.remove(file.path(analysis_output_root, "tables/table4_standard_error.html"))
 cat("Saved table4_standard_error.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -622,7 +597,7 @@ triple_did      <- round((exp(coef_did_triple["treated:post:price_segmentmove_up
 
 cat("Adj R²:", round(summary(m_did_price_triple)$adj.r.squared, 3), "\n")
 cat("post × move_up =", post_midlux,
-    "% (Marion) | treated × post × move_up = +", triple_did,
+    "% (", study$core_cat_label, ") | treated × post × move_up = +", triple_did,
     "% (suburban offset)\n")
 print(robust_se(m_did_price_triple))
 
@@ -679,9 +654,9 @@ modelsummary(
   notes     = paste0(
     "Simple DV is log sale price. DOM models DV is median DOM, ",
     "Redfin county-month panel (N=", n_panel, "). HC1 robust SEs. ",
-    "Reported DOM may differ from property-level cumulative marketing time after relisting."
+    "DOM subject to delist-relist gaming — lower bound interpretation."
   ),
-  output    = table_path("table5_dom_models.html")
+  output    = file.path(analysis_output_root, "tables/table5_dom_models.html")
 )
 
 # ── TABLE 6: SDF price models — core squeeze evidence ────────────────────────
@@ -696,16 +671,15 @@ modelsummary(
   coef_map  = coef_map,
   coef_omit = "factor\\(county\\)|factor\\(year\\)",
   gof_map   = c("nobs", "r.squared", "adj.r.squared"),
-  title     = "Table 6: Rate Lock-In Association with Real Sale Prices",
+  title     = "Table 6: Rate Lock-In Effect on Sale Prices",
   notes     = paste0(
-    "Source: STATS Indiana SDF deed records. ",
-    "DV: log sale price in constant 2025 dollars. N=", n_label, " transactions. HC1 robust SEs. ",
+    "Source: ", study$sdf_source_short, ". ",
+    "DV: log sale price. N=", n_label, " transactions. HC1 robust SEs. ",
     "Luxury tier capped at ", dollar(luxury_CAP),
     ". County and year FE omitted from display. ",
-    "OVB candidates: new construction (Hamilton County Eli Lilly/Amazon expansion), ",
-    "school district premiums (Carmel/Fishers), corporate relocations."
+    study$text$ovb_note
   ),
-  output    = table_path("table6_price_models.html")
+  output    = file.path(analysis_output_root, "tables/table6_price_models.html")
 )
 
 # ── TABLE 7: DiD models ────────────────────────────────────────────────────────
@@ -722,21 +696,15 @@ modelsummary(
   coef_omit = "factor\\(county\\)|factor\\(year\\)",
   gof_map   = c("nobs", "r.squared", "adj.r.squared"),
   title     = "Table 7: Difference-in-Differences Estimates — Price and Volume",
-  notes     = paste0(
-    "Treatment = suburban counties (proxy for move-up buyers). ",
-    "Control = Marion County (proxy for necessity-driven buyers). ",
-    "Geography is imperfect proxy for buyer type — HMDA data needed. ",
-    "Marion income constraint (median HHI ", marion_hhi_short,
-    ") implies conservative lower bounds."
-  ),
-  output    = table_path("table7_did_models.html")
+  notes     = study$text$table7_note(marion_hhi_short),
+  output    = file.path(analysis_output_root, "tables/table7_did_models.html")
 )
 
 cat("Saved: table5, table6, table7 HTML — rendering to PNG\n")
 
 for (tbl in c("table5_dom_models", "table6_price_models", "table7_did_models")) {
-  tbl_html <- table_path(paste0(tbl, ".html"))
-  tbl_png  <- table_path(paste0(tbl, ".png"))
+  tbl_html <- file.path(analysis_output_root, "tables", paste0(tbl, ".html"))
+  tbl_png  <- file.path(analysis_output_root, "tables", paste0(tbl, ".png"))
   webshot2::webshot(
     url   = paste0("file://", tbl_html),
     file  = tbl_png,
@@ -868,10 +836,10 @@ ggplot(rate_grid, aes(x = rate_gap, y = fit_dollars,
   
   # Segment labels annotating key rate-sensitivity findings
   annotate("text", x = 1.5, y = 1000000,
-           label = paste0("Move-up:\nLarger modeled rate association\n(",
-                          squeeze_mult, "× entry-tier slope)"),
+           label = paste0("Move-up:\nHighly vulnerable to rate hikes\n(",
+                          squeeze_mult, "× Squeeze Multiplier)"),
            color = "#ED7D31", fontface = "bold", hjust = 0, size = 3.5, lineheight = 0.9) +
-  annotate("text", x = 1.5, y = 400000, label = "Entry-Level:\nSmaller association",
+  annotate("text", x = 1.5, y = 400000, label = "Entry-Level:\nResilient to rate shocks",
            color = "#70AD47", fontface = "bold", hjust = 0, size = 3.5, lineheight = 0.9) +
 
 scale_color_manual(
@@ -888,18 +856,17 @@ scale_color_manual(
     breaks = c(100000, 250000, 500000, 750000, 1000000, 1500000, 2000000)
   ) +
   labs(
-    title    = "Modeled Real Sale Price by Mortgage-Rate Gap",
-    subtitle = paste0("Associational predictions in constant 2025 dollars | N = ",
+    title    = study$text$fig12_title,
+    subtitle = paste0(study$text$fig12_subtitle,
                       n_sdf, " transactions"),
     x        = paste0("Rate Lock-In Gap (PP Above ", RATE_BASELINE, "% Baseline)"),
-    y        = "Predicted real sale price (2025 $)",
+    y        = "Predicted Rate Penalty ($)",
     color   = "Price segment",
     caption = paste0(
-      "Source: STATS Indiana SDF deed records.\n",
+      "Source: ", study$sdf_source_short, ".\n",
       "N = ", n_sdf, " transactions after regression filters ",
-      "(matched to FRED rate; nominal sale price >", dollar(MIN_PRICE), ").\n",
-      "Luxury slope (", slope_luxury, "%/pp) reflects thin market volatility, ",
-      "not behavioral rate sensitivity\n",
+      "(matched to FRED rate, sale price >", dollar(MIN_PRICE), ").\n",
+      "Luxury slope (", slope_luxury, study$text$fig12_luxury_note,
       "(~", luxury_annual, " transactions/county/year). ",
       "Peak observed gap of ", peak_gap_pp, "pp = ", peak_rate_pct,
       "% mortgage rate in the panel window.\n",
@@ -917,8 +884,8 @@ scale_color_manual(
     plot.margin      = margin(5, 50, 5, 5, "pt")
   )
 
-ggsave(figure_path("fig12_marginal_effects.png"), width = 10, height = 5.5, dpi = 300)
-ggsave(figure_path("fig12_marginal_effects.pdf"), width = 10, height = 5.5)
+ggsave(file.path(analysis_output_root, "figures/fig12_marginal_effects.png"), width = 10, height = 5.5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig12_marginal_effects.pdf"), width = 10, height = 5.5)
 cat("Saved fig12_marginal_effects.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -955,7 +922,7 @@ forecast_tbl <- tibble(
 
 datasummary_df(
   forecast_tbl,
-  title = "Real-Price Sensitivity by Price Segment — Derived From M_Price_Interact Model",
+  title = "Rate Sensitivity by Price Segment — Derived From M_Price_Interact Model",
   notes = paste0(
     "Slopes from m_price_interact HC1 robust SEs, N = ", n_sdf, " transactions. ",
     "Squeeze multiplier = move-up slope / entry slope = constant across all rate environments. ",
@@ -963,15 +930,15 @@ datasummary_df(
     "% mortgage rate vs ", RATE_BASELINE, "% baseline). ",
     "Adj R\u00b2 = ", round(summary(m_price_interact)$adj.r.squared, 3), "."
   ),
-  output = table_path("table8_rate_sensitivity.html")
+  output = file.path(analysis_output_root, "tables/table8_rate_sensitivity.html")
 )
 
 webshot2::webshot(
-  url   = paste0("file://", table_path("table8_rate_sensitivity.html")),
-  file  = table_path("table8_rate_sensitivity.png"),
+  url   = paste0("file://", file.path(analysis_output_root, "tables/table8_rate_sensitivity.html")),
+  file  = file.path(analysis_output_root, "tables/table8_rate_sensitivity.png"),
   delay = 2, zoom = 1.5, vwidth = 900
 )
-file.remove(table_path("table8_rate_sensitivity.html"))
+file.remove(file.path(analysis_output_root, "tables/table8_rate_sensitivity.html"))
 cat("Saved outputs/tables/table8_rate_sensitivity.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -984,7 +951,7 @@ options(tigris_use_cache = TRUE)
 # 1. PREP THE SDF PRICE DATA
 # ---------------------------------------------------------
 # guess_max = 200000 prevents the parsing warnings by scanning all rows first
-zip_prices <- read_csv(here::here("data/processed/sdf_indiana.csv"),
+zip_prices <- read_csv(here::here(study$sdf_file),
                        guess_max = 200000) %>%
   mutate(zip_code = str_pad(as.character(zip_code), width = 5, pad = "0")) %>%
   group_by(zip_code) %>%
@@ -996,7 +963,7 @@ zip_prices <- read_csv(here::here("data/processed/sdf_indiana.csv"),
 
 # 2. PREP THE INCOME DATA
 # ---------------------------------------------------------
-zip_income <- read_csv(here::here("data/processed/hhi_zcta.csv"),
+zip_income <- read_csv(here::here(study$hhi_zcta_file),
                        show_col_types = FALSE) %>%
   mutate(zip_code = str_pad(as.character(zip_code), width = 5, pad = "0"))
 
@@ -1005,8 +972,9 @@ zip_income <- read_csv(here::here("data/processed/hhi_zcta.csv"),
 df_map_final <- zip_prices %>%
   inner_join(zip_income, by = "zip_code") %>%
   mutate(stress_ratio = median_sale_price / zcta_hhi) %>%
-  # Filter strictly for the Indy Metro (ZIP prefixes 460, 461, 462)
-  filter(str_detect(zip_code, "^(460|461|462)"))
+  # Indiana: filter strictly for the Indy Metro (ZIP prefixes 460, 461, 462).
+  # Twin Cities sample ZIPs are already limited to the seven counties.
+  filter(if (is.null(study$map_zip_regex)) TRUE else str_detect(zip_code, study$map_zip_regex))
 
 # 4. FETCH CENSUS ZCTA SHAPEFILES
 # ---------------------------------------------------------
@@ -1015,7 +983,7 @@ us_zctas <- zctas(year = 2020, cb = TRUE)
 
 # 5. JOIN AND ANNOTATE
 # ---------------------------------------------------------
-# inner_join to df_map_final implicitly filters to Indianapolis metro ZIPs
+# inner_join to df_map_final implicitly filters to the study-area ZIPs
 map_data <- us_zctas %>%
   inner_join(df_map_final, by = c("GEOID20" = "zip_code"))
 
@@ -1026,25 +994,16 @@ highlight_zips <- map_data %>%
   )) %>%
   mutate(centroid = st_centroid(geometry))
 
-# 5a. COUNTY BOUNDARIES — five-county study area
+# 5a. COUNTY BOUNDARIES — study counties
 # cb = TRUE uses a simplified cartographic boundary file (smaller download)
-study_fips <- c("18097", "18057", "18011", "18063", "18081")
-study_counties <- counties(state = "IN", cb = TRUE, progress_bar = FALSE) %>%
+study_fips <- study$county_fips
+study_counties <- counties(state = study$tiger_state, cb = TRUE, progress_bar = FALSE) %>%
   filter(GEOID %in% study_fips) %>%
   st_transform(st_crs(map_data))
 
-# 5b. CITY POINT MARKERS — coordinates from housing_map_app.py CITY_POINTS
-city_points <- tibble(
-  city = c("Indianapolis", "Carmel", "Fishers", "Noblesville", "Zionsville",
-           "Whitestown", "Avon", "Brownsburg", "Greenwood", "Plainfield",
-           "Mooresville", "Franklin", "Greenfield"),
-  lat  = c(39.7684, 39.9784, 39.9567, 40.0456, 39.9506,
-           39.9914, 39.7626, 39.8437, 39.6137, 39.7042,
-           39.6128, 39.4806, 39.7870),
-  lon  = c(-86.1581, -86.1180, -85.9669, -85.9669, -86.2661,
-           -86.3522, -86.3994, -86.3969, -86.1066, -86.3994,
-           -86.3730, -86.0558, -85.7697)
-) %>%
+# 5b. CITY POINT MARKERS — Indiana coordinates from housing_map_app.py
+# CITY_POINTS; Twin Cities coordinates are city-center points
+city_points <- study$city_points %>%
   st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
   st_transform(st_crs(map_data))
 
@@ -1068,7 +1027,8 @@ indy_squeeze_map <- ggplot(data = map_data) +
     min.segment.length = 0.3,
     segment.color = "grey50",
     segment.size  = 0.3,
-    max.overlaps  = 20
+    max.overlaps  = 20,
+    seed          = 42    # fixed label layout so the map reproduces exactly
   ) +
   scale_fill_gradientn(
     colors = c("#4472C4", "#F2F2F2", "#ED7D31", "#C00000"),
@@ -1084,15 +1044,16 @@ indy_squeeze_map <- ggplot(data = map_data) +
         label = paste0("Zip: ", GEOID20, "\nRatio: ", round(stress_ratio, 1), "x")),
     stat = "sf_coordinates",
     size = 3.5, fontface = "bold", fill = alpha("white", 0.9),
-    box.padding = 0.8, segment.color = "grey30"
+    box.padding = 0.8, segment.color = "grey30",
+    seed = 42
   ) +
   labs(
-    title    = "The Indy Squeeze: Housing Vulnerability by Zip Code",
-    subtitle = paste0("Calculated using the full population of STATS Indiana SDF Transactions",
+    title    = study$map_title,
+    subtitle = paste0("Calculated using the full population of ", study$sdf_source_map, " Transactions",
                       " (", year_range_label,
                       ").\nAreas in dark red face the most severe price-to-income",
                       " decoupling."),
-    caption  = "Source: STATS Indiana SDF & U.S. Census Bureau (ZCTA HHI)."
+    caption  = paste0("Source: ", study$sdf_source_map, " & U.S. Census Bureau (ZCTA HHI).")
   ) +
   theme_void(base_size = 14) +
   theme(
@@ -1104,9 +1065,9 @@ indy_squeeze_map <- ggplot(data = map_data) +
 
 # 7. EXPORT
 # ---------------------------------------------------------
-ggsave(figure_path("fig13_zip_squeeze_map.png"),
+ggsave(file.path(analysis_output_root, "figures/fig13_zip_squeeze_map.png"),
        plot = indy_squeeze_map, width = 10, height = 8, dpi = 300, bg = "white")
-ggsave(figure_path("fig13_zip_squeeze_map.pdf"),
+ggsave(file.path(analysis_output_root, "figures/fig13_zip_squeeze_map.pdf"),
        plot = indy_squeeze_map, width = 10, height = 8)
 
 
@@ -1114,9 +1075,15 @@ ggsave(figure_path("fig13_zip_squeeze_map.pdf"),
 # SAVE MODELS FOR REPRODUCIBILITY
 # ══════════════════════════════════════════════════════════════════════════════
 
-saveRDS(m_price_interact,    model_path("m_price_interact.rds"))
-saveRDS(m_did_price_triple,  model_path("m_did_price_triple.rds"))
-saveRDS(m_did_volume_triple, model_path("m_did_volume_triple.rds"))
+saveRDS(m_price_interact,    squeeze_model_path(study, "m_price_interact.rds"))
+saveRDS(m_did_price_triple,  squeeze_model_path(study, "m_did_price_triple.rds"))
+saveRDS(m_did_volume_triple, squeeze_model_path(study, "m_did_volume_triple.rds"))
 
-cat("Analysis output root:", analysis_output_root, "\n")
-cat("Figures, tables, and saved models were written under that directory.\n")
+cat("Figures: outputs/figures/fig11_histogram_price.png/.pdf,",
+    "fig12_marginal_effects.png/.pdf, fig13_zip_squeeze_map.png/.pdf\n")
+cat("Tables:  outputs/tables/table5_dom_models.png, table6_price_models.png,",
+    "table7_did_models.png, table2_hypothesis_test.png,",
+    "table3_correlation.png, table4_standard_error.png,",
+    "table8_rate_sensitivity.png\n")
+cat("Models:  data/processed/m_price_interact.rds, m_did_price_triple.rds,",
+    "m_did_volume_triple.rds\n")

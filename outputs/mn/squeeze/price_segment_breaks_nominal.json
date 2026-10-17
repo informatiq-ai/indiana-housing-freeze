@@ -1,0 +1,31 @@
+{
+  "centers": [
+    304250.67187498254,
+    622499.1828023253,
+    1462433.5890750047,
+    3880815.8452560194
+  ],
+  "breaks": [
+    463374.92733865394,
+    1042466.385938665
+  ],
+  "fit_records": 242799,
+  "price_basis": "nominal",
+  "cohort": "residential",
+  "fit_years": [
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "clusters": 4,
+  "seed": 42,
+  "initializations": 10,
+  "price_cap": 15000000,
+  "indiana_breaks": [
+    380000,
+    1050000
+  ],
+  "cpi_base_year": 2025
+}

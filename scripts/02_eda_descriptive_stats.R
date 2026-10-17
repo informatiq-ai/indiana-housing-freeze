@@ -11,12 +11,12 @@
 #   fig6_transaction_volume.png  — SDF transaction volume collapse
 #   fig7_affordability.png       — Affordability ratio by county
 #   fig8_parallel_trends.png     — DiD assumption validation
-#   fig9_price_index.png         — Price index by segment 2015–2025
+#   fig9_price_index.png         — Price index by segment 2021–2025
 #   fig10_hhi_price_correlation  — HHI vs median sale price by ZIP (DV vs key IV)
 #   table1_descriptive           — Descriptive statistics table
 #
 # Key data limitations:
-#   - Redfin DOM may differ from property-level cumulative marketing time
+#   - Redfin DOM subject to delist-relist gaming (lower bound on true DOM)
 #   - Marion County median never exceeds $380K — income constraint,
 #     not rate shock
 #   - Geography proxies for buyer type, not direct identification
@@ -27,25 +27,13 @@
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tidyverse, scales, modelsummary, zoo, here, webshot2)
 
-# Set INDIANA_ANALYSIS_OUTPUT_ROOT to generate an isolated analysis run without
-# replacing the published outputs. The default preserves the historical paths.
-output_setting <- Sys.getenv("INDIANA_ANALYSIS_OUTPUT_ROOT", "")
-analysis_output_root <- if (!nzchar(output_setting)) {
-  here::here("outputs")
-} else if (grepl("^/", output_setting)) {
-  output_setting
-} else {
-  here::here(output_setting)
-}
-figures_dir <- file.path(analysis_output_root, "figures")
-tables_dir <- file.path(analysis_output_root, "tables")
-models_dir <- file.path(analysis_output_root, "models")
-dir.create(figures_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(tables_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
-figure_path <- function(filename) file.path(figures_dir, filename)
-table_path <- function(filename) file.path(tables_dir, filename)
-model_path <- function(filename) file.path(models_dir, filename)
+# SQUEEZE_STUDY selects geography, inputs, and labels (see squeeze_study.R);
+# the default "indiana" writes the published outputs.
+source(here::here("scripts/squeeze_study.R"))
+study <- squeeze_study_settings()
+analysis_output_root <- squeeze_output_root(study)
+dir.create(file.path(analysis_output_root, "figures"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(analysis_output_root, "tables"), recursive = TRUE, showWarnings = FALSE)
 
 # ── Analysis constants ────────────────────────────────────────────────────────
 LTV_RATIO <- 0.80    # 80% LTV assumption for affordability calculation
@@ -53,29 +41,21 @@ MIN_PRICE <- 50000   # $50K — removes implausible deed transfers
 luxury_CAP <- 15e6   # $15M — removes data entry errors from luxury tier
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-panel_data <- readRDS(here::here("data/processed/panel_data.rds")) %>%
-  mutate(
-    median_sale_price_nominal = median_sale_price,
-    median_sale_price = median_sale_price_2025
-  )
+panel_data <- readRDS(here::here(study$panel_rds))
 
 # Read full SDF first to compute the count of luxury data-entry outliers
 # dropped by the luxury_CAP filter, then apply the cap to produce sdf_raw.
-sdf_full <- read_csv(here::here("data/processed/sdf_indiana.csv"),
-                     show_col_types = FALSE) %>%
-  mutate(
-    sale_price_nominal = sale_price,
-    sale_price = sale_price_2025
-  )
+sdf_full <- read_csv(here::here(study$sdf_file),
+                     show_col_types = FALSE)
 n_lux_total   <- sum(sdf_full$price_segment == "luxury", na.rm = TRUE)
 n_lux_dropped <- sum(sdf_full$price_segment == "luxury" &
-                       sdf_full$sale_price_nominal > luxury_CAP, na.rm = TRUE)
+                       sdf_full$sale_price > luxury_CAP, na.rm = TRUE)
 lux_dropped_pct <- if (n_lux_total > 0) {
   round(n_lux_dropped / n_lux_total * 100, 1)
 } else 0
 
 sdf_raw <- sdf_full %>%
-  filter(!(price_segment == "luxury" & sale_price_nominal > luxury_CAP))
+  filter(!(price_segment == "luxury" & sale_price > luxury_CAP))
 
 # ── Lookup tables derived from panel_data (mirrors 03_regression setup) ───────
 county_controls <- panel_data %>%
@@ -100,7 +80,7 @@ sdf <- sdf_raw %>%
   mutate(
     treated = if_else(geography == "suburb", 1L, 0L),
     did     = treated * post,
-    monthly_payment = (sale_price_nominal * LTV_RATIO *
+    monthly_payment = (sale_price * LTV_RATIO *
                          (mortgage_rate / 1200 *
                             (1 + mortgage_rate / 1200)^360) /
                          ((1 + mortgage_rate / 1200)^360 - 1)),
@@ -111,8 +91,7 @@ sdf <- sdf_raw %>%
     price_segment       = relevel(price_segment,       ref = "entry"),
     geography           = relevel(factor(geography),   ref = "metro")
   ) %>%
-  filter(!is.na(rate_gap), !is.na(sale_price),
-         sale_price_nominal > MIN_PRICE)
+  filter(!is.na(rate_gap), !is.na(sale_price), sale_price > MIN_PRICE)
 
 n_sdf <- formatC(nrow(sdf), format = "f", digits = 0, big.mark = ",")
 
@@ -135,16 +114,12 @@ entry_label  <- paste0("Entry (<$",      entry_break_k, "K)")
 midlux_label <- paste0("Move-up ($",     entry_break_k, "K–$", midlux_break_lbl, ")")
 luxury_label <- paste0("Luxury (>$",     midlux_break_lbl, ")")
 
-# Marion County median household income — referenced in captions
-marion_hhi_val <- panel_data %>%
-  filter(county == "Marion") %>%
-  pull(median_hhi) %>%
-  first()
-marion_hhi_lbl <- paste0("$", formatC(round(marion_hhi_val / 1000), format = "f",
-                                      digits = 0, big.mark = ","), "K")
+# Core-county median household income — referenced in captions
+# (Indiana: Marion, formatted "$63K"; Twin Cities: one value per core county)
+marion_hhi_lbl <- core_hhi_label(panel_data, study)
 
 # ── Shared color palette ──────────────────────────────────────────────────────
-col_metro    <- "#4472C4"   # blue   — Marion County
+col_metro    <- "#4472C4"   # blue   — core county (Marion; Hennepin/Ramsey)
 col_suburb   <- "#ED7D31"   # orange — suburbs
 col_entry    <- "#70AD47"   # green  — entry tier
 col_moveup   <- "#ED7D31"   # orange — move-up tier
@@ -189,15 +164,15 @@ panel_data %>%
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   scale_y_continuous(labels = label_number(suffix = "%")) +
   labs(
-    title    = "The Mortgage Rate Lock-In Gap, 2015–2025",
+    title    = "The Mortgage Rate Lock-In Gap, 2021–2025",
     subtitle = "Shaded area = payment shock for homeowners trading a 3% mortgage for current rates",
     x = NULL, y = "30-year fixed rate",
     caption  = "Source: FRED (MORTGAGE30US)"
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig1_rate_gap.png"), width = 9, height = 4.5, dpi = 300)
-ggsave(figure_path("fig1_rate_gap.pdf"), width = 9, height = 4.5)
+ggsave(file.path(analysis_output_root, "figures/fig1_rate_gap.png"), width = 9, height = 4.5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig1_rate_gap.pdf"), width = 9, height = 4.5)
 cat("Saved fig1_rate_gap.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -207,35 +182,34 @@ cat("Saved fig1_rate_gap.png/.pdf\n")
 
 panel_data %>%
   mutate(
-    era = if_else(post == 0,
-                  "Pre-shock (2015–May 2022)",
-                  "Post-shock (Jun 2022–2025)"),
-    era = factor(era, levels = c("Pre-shock (2015–May 2022)",
-                                 "Post-shock (Jun 2022–2025)")),
-    Geography = if_else(geography == "metro", "Marion County (metro)", "Suburbs")
+    era = if_else(as.integer(as.character(year)) <= 2021,
+                  "Pre-shock (2021)", "Post-shock (2022–2025)"),
+    era = factor(era, levels = c("Pre-shock (2021)", "Post-shock (2022–2025)")),
+    Geography = if_else(geography == "metro", study$core_label, "Suburbs")
   ) %>%
   ggplot(aes(x = median_dom, fill = geography)) +
   geom_histogram(binwidth = 5, position = "identity",
                  alpha = 0.65, color = "white") +
   scale_fill_manual(
     values = c("metro" = col_metro, "suburb" = col_suburb),
-    labels = c("Marion County (metro)",
-               "Suburbs (Hamilton/Boone/Hendricks/Johnson)")
+    labels = c(study$core_label,
+               study$suburb_detail_label)
   ) +
   facet_grid(Geography ~ era) +
   labs(
     title    = "Distribution of Median Days on Market — Pre vs. Post Rate Shock",
-    subtitle = "Single family residential | Indiana county-month observations",
+    subtitle = paste0("Single family residential | ", study$region_label,
+                      " county-month observations"),
     x        = "Median days on market",
     y        = "Count of county-month cells",
     fill     = NULL,
-    caption  = "Source: Redfin county market tracker.\nReported listing DOM is not verified property-level cumulative marketing time;\nrelisting can create measurement error of unknown direction."
+    caption  = "Source: Redfin county market tracker.\nNote: MLS days on market may understate true time on market due to\ndelist-relist cycling by agents. Figures represent a lower bound."
   ) +
   theme_squeeze +
   theme(strip.text.y = element_text(angle = 0))
 
-ggsave(figure_path("fig2_dom_histogram.png"), width = 10, height = 6, dpi = 300)
-ggsave(figure_path("fig2_dom_histogram.pdf"), width = 10, height = 6)
+ggsave(file.path(analysis_output_root, "figures/fig2_dom_histogram.png"), width = 10, height = 6, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig2_dom_histogram.pdf"), width = 10, height = 6)
 cat("Saved fig2_dom_histogram.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -260,14 +234,16 @@ panel_data %>%
            label = "Rate shock", hjust = 0, size = 3.2, color = "grey40") +
   scale_color_manual(
     values = c("metro" = col_metro, "suburb" = col_suburb),
-    labels = c("Marion County (metro)", "Suburbs (treated)")
+    labels = c(study$core_label, "Suburbs (treated)")
   ) +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   labs(
-    title    = "Median Days on Market — Marion County vs. Suburbs, 2015–2025",
+    title    = paste0("Median Days on Market — ",
+                      sub(" \\(metro\\)$", "", study$core_label),
+                      " vs. Suburbs, 2021–2025"),
     subtitle = "Thick line = 3-month rolling average | Faint line = monthly raw values",
     x = NULL, y = "Average Median DOM", color = NULL,
-    caption  = "Source: Redfin county market tracker.\nReported DOM may differ from cumulative marketing time after delisting or relisting."
+    caption  = "Source: Redfin county market tracker.\nNote: DOM figures subject to delist-relist manipulation.\nTrue DOM divergence post-shock is likely larger than shown."
   ) +
   theme_minimal(base_size = 13) +
   theme(
@@ -279,8 +255,8 @@ panel_data %>%
     panel.grid.minor = element_blank()
   )
 
-ggsave(figure_path("fig3_dom_over_time.png"), width = 10, height = 5, dpi = 300)
-ggsave(figure_path("fig3_dom_over_time.pdf"), width = 10, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig3_dom_over_time.png"), width = 10, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig3_dom_over_time.pdf"), width = 10, height = 5)
 cat("Saved fig3_dom_over_time.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -305,24 +281,23 @@ panel_data %>%
   scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
   facet_wrap(~ geography,
              labeller = labeller(geography = c(
-               "metro"  = "Marion County (metro)",
+               "metro"  = study$core_label,
                "suburb" = "Suburbs"
              ))) +
   labs(
-    title    = "Avg Sale-to-List Ratio by Price Segment and Geography, 2015–2025",
+    title    = "Avg Sale-to-List Ratio by Price Segment and Geography, 2021–2025",
     subtitle = "Compression below 1.0 = sellers accepting below asking price",
     x = "Year", y = "Avg sale-to-list ratio", fill = "Price segment",
     caption  = paste0(
       "Source: Redfin county market tracker.\n",
       "Luxury tier excluded: county medians rarely exceed $", midlux_break_lbl,
-      " in this market.\nMarion County absence of move-up reflects income ",
-      "constraint (median HHI ", marion_hhi_lbl, "), not a rate shock response."
+      study$text$fig4_core_note(marion_hhi_lbl)
     )
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig4_sale_to_list.png"), width = 10, height = 5, dpi = 300)
-ggsave(figure_path("fig4_sale_to_list.pdf"), width = 10, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig4_sale_to_list.png"), width = 10, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig4_sale_to_list.pdf"), width = 10, height = 5)
 cat("Saved fig4_sale_to_list.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -359,22 +334,22 @@ panel_data %>%
            label = "Rate shock", hjust = 0, size = 3.0, color = "grey40") +
   scale_color_manual(
     values = c("metro" = col_metro, "suburb" = col_suburb),
-    labels = c("Marion County (metro)", "Suburbs (treated)")
+    labels = c(study$core_label, "Suburbs (treated)")
   ) +
   scale_y_continuous(labels = percent_format(accuracy = 1),
                      limits = c(0, NA)) +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   facet_wrap(~ metric, ncol = 2) +
   labs(
-    title    = "Seller Market Stress: Sold Above List vs Price Drops, 2015–2025",
-    subtitle = "Post-shock: bidding wars trend down while price cuts trend up | Faint lines = monthly raw values | Trend = LOESS smoother",
+    title    = "Seller Market Stress: Sold Above List vs Price Drops, 2021–2025",
+    subtitle = study$text$fig5_subtitle,
     x = NULL, y = "Share of transactions", color = NULL,
     caption  = "Source: Redfin county market tracker.\nSold above list = share of closed sales above original list price.\nPrice drops = share of active listings with at least one price reduction."
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig5_seller_stress.png"), width = 11, height = 5, dpi = 300)
-ggsave(figure_path("fig5_seller_stress.pdf"), width = 11, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig5_seller_stress.png"), width = 11, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig5_seller_stress.pdf"), width = 11, height = 5)
 cat("Saved fig5_seller_stress.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -407,15 +382,15 @@ panel_data %>%
   scale_y_continuous(labels = comma) +
   facet_wrap(~ geography,
              labeller = labeller(geography = c(
-               "metro"  = "Marion County (metro)",
+               "metro"  = study$core_label,
                "suburb" = "Suburbs"
              ))) +
   labs(
-    title    = "Annual Transaction Volume by Price Segment, 2015–2025",
-    subtitle = "Suburban move-up volume collapse is the rate lock-in market freeze made visible",
+    title    = "Annual Transaction Volume by Price Segment, 2021–2025",
+    subtitle = study$text$fig6_subtitle,
     x = "Year", y = "Total transactions", fill = "Price segment",
     caption  = paste0(
-      "Source: Indiana Sales Disclosure Form deed records, STATS Indiana.\n",
+      "Source: ", study$sdf_source_long, ".\n",
       "Arm's-length residential sales only. Luxury tier capped at ",
       scales::dollar(luxury_CAP), "\n(",
       formatC(n_lux_dropped, format = "f", digits = 0, big.mark = ","),
@@ -425,8 +400,8 @@ panel_data %>%
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig6_transaction_volume.png"), width = 10, height = 5, dpi = 300)
-ggsave(figure_path("fig6_transaction_volume.pdf"), width = 10, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig6_transaction_volume.png"), width = 10, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig6_transaction_volume.pdf"), width = 10, height = 5)
 cat("Saved fig6_transaction_volume.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -442,33 +417,27 @@ panel_data %>%
   ggplot(aes(x = date, y = avg_afford, color = county, linetype = geography)) +
   geom_line(linewidth = 1.0) +
   geom_hline(yintercept = 0.30, linetype = "dashed", color = "red", alpha = 0.6) +
-  annotate("text", x = as.Date("2015-02-01"), y = 0.31,
+  annotate("text", x = as.Date("2021-02-01"), y = 0.31,
            label = "30% income threshold (housing stress)",
            hjust = 0, size = 3.2, color = "red", alpha = 0.8) +
-  scale_color_manual(values = c(
-    "Marion"    = col_metro,
-    "Hamilton"  = "#ED7D31",
-    "Boone"     = "#70AD47",
-    "Hendricks" = "#FFC000",
-    "Johnson"   = "#9B59B6"
-  )) +
+  scale_color_manual(values = study$county_colors) +
   scale_linetype_manual(
     values = c("metro" = "solid", "suburb" = "dashed"),
-    labels = c("Metro (Marion)", "Suburb")
+    labels = c(study$core_short_label, "Suburb")
   ) +
   scale_y_continuous(labels = percent_format(accuracy = 1)) +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   labs(
     title    = "Affordability Ratio: Estimated Mortgage Payment as Share of Median HHI",
-    subtitle = "Two mechanisms, same outcome — Marion via income constraint, suburbs via rate shock",
+    subtitle = study$text$fig7_subtitle,
     x = NULL, y = "Monthly payment / median monthly income",
     color = "County", linetype = "Geography",
     caption  = "Source: Redfin median sale price, FRED MORTGAGE30US, Census ACS 2023 5-year.\nAffordability ratio = estimated 30-yr fixed payment on 80% LTV / median monthly HHI.\nNote: ACS income estimates are cross-sectional (2023) applied across all years."
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig7_affordability.png"), width = 10, height = 5, dpi = 300)
-ggsave(figure_path("fig7_affordability.pdf"), width = 10, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig7_affordability.png"), width = 10, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig7_affordability.pdf"), width = 10, height = 5)
 cat("Saved fig7_affordability.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -488,7 +457,7 @@ sdf %>%
   mutate(era = if_else(date < as.Date("2022-06-01"), "pre", "post")) %>%
   ggplot(aes(x = date, y = avg_log_price, color = geography)) +
   annotate("rect",
-           xmin = as.Date("2015-01-01"), xmax = as.Date("2022-06-01"),
+           xmin = as.Date("2021-01-01"), xmax = as.Date("2022-06-01"),
            ymin = -Inf, ymax = Inf, fill = "grey90", alpha = 0.6) +
   geom_line(data = ~ filter(.x, date >= as.Date("2022-06-01")),
             linewidth = 0.9, alpha = 0.4) +
@@ -496,33 +465,36 @@ sdf %>%
             linewidth = 1.8) +
   geom_vline(xintercept = as.Date("2022-06-01"),
              linetype = "dashed", color = "grey50") +
-  annotate("text", x = as.Date("2015-03-01"), y = 12.75,
-           label = "Expanded pre-shock period\n(parallel trends required)",
+  annotate("text", x = as.Date("2021-02-01"), y = 12.75,
+           label = "Pre-shock period\n(parallel trends required)",
            hjust = 0, size = 3.0, color = "grey40") +
   annotate("text", x = as.Date("2022-07-01"), y = 12.65,
            label = "Rate shock\n(post period begins)",
            hjust = 0, size = 3.0, color = "grey40") +
+  annotate("text", x = as.Date("2021-06-01"), y = 11.85,
+           label = study$text$fig8_annotation,
+           hjust = 0, size = 3.0, color = "grey40", fontface = "italic") +
   scale_color_manual(
     values = c("metro" = col_metro, "suburb" = col_suburb),
-    labels = c("Marion County (control)", "Suburbs (treated)")
+    labels = c(study$core_control_label, "Suburbs (treated)")
   ) +
   scale_y_continuous(
     labels = function(x) paste0("$", round(exp(x) / 1000, 0), "K")
   ) +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   labs(
-    title    = "Parallel Trends Check — Mean Real Sale Price by Geography",
-    subtitle = "Constant 2025 dollars | Expanded 2015–2022 pre-period shown without imposing a parallel-trends conclusion",
-    x = NULL, y = "Mean real sale price (log scale)", color = NULL,
+    title    = "Parallel Trends Check — Mean Sale Price by Geography",
+    subtitle = study$text$fig8_subtitle,
+    x = NULL, y = "Mean Sale Price (log scale)", color = NULL,
     caption = paste0(
-      "Source: STATS Indiana SDF deed records. N = ", n_sdf, " transactions.\n",
+      "Source: ", study$sdf_source_short, ". N = ", n_sdf, " transactions.\n",
       "Parallel trends: treatment and control must track together pre-shock for DiD to be valid.\n",
-      "Geography proxies for buyer type — Marion income constraint ($63K HHI) implies conservative lower bound.")
+      study$text$fig8_note(marion_hhi_lbl))
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig8_parallel_trends.png"), width = 9, height = 5, dpi = 300)
-ggsave(figure_path("fig8_parallel_trends.pdf"), width = 9, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig8_parallel_trends.png"), width = 9, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig8_parallel_trends.pdf"), width = 9, height = 5)
 cat("Saved fig8_parallel_trends.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -535,7 +507,7 @@ sdf %>%
   summarise(median_price = median(sale_price, na.rm = TRUE),
             n = n(), .groups = "drop") %>%
   mutate(
-    geography     = if_else(county == "Marion", "metro", "suburb"),
+    geography     = if_else(county %in% study$core_counties, "metro", "suburb"),
     price_segment = factor(price_segment,
                            levels = c("entry", "move_up", "luxury"),
                            labels = c(entry_label, midlux_label, luxury_label))
@@ -554,7 +526,7 @@ sdf %>%
   geom_hline(yintercept = 100, linetype = "dashed", color = "grey50") +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2.5) +
-  annotate("text", x = 7.1, y = 101.5,
+  annotate("text", x = 1.1, y = 101.5,
            label = "2021 baseline", hjust = 0, size = 3.0, color = "grey40") +
   scale_color_manual(values = setNames(
     c(col_entry, col_moveup, col_luxury),
@@ -563,25 +535,24 @@ sdf %>%
   scale_y_continuous(breaks = seq(80, 140, by = 10)) +
   facet_wrap(~ geography,
              labeller = labeller(geography = c(
-               "metro"  = "Marion County (metro)",
+               "metro"  = study$core_label,
                "suburb" = "Suburbs"
              ))) +
   labs(
-    title    = "Median Real Sale Price Index by Segment, 2015–2025 (2021 = 100)",
-    subtitle = "Entry tier appreciation outpaced move-up — the squeeze in dollar terms",
+    title    = "Median Sale Price Index by Segment, 2021–2025 (2021 = 100)",
+    subtitle = study$text$fig9_subtitle,
     x = "Year", y = "Price index (2021 = 100)", color = "Price segment",
     caption = paste0(
-      "Source: Indiana Sales Disclosure Form deed records, STATS Indiana.\n",
+      "Source: ", study$sdf_source_long, ".\n",
       "N = ", format(n_total, big.mark = ","), " residential transactions.\n ",
       "Luxury tier capped at ", scales::dollar(luxury_CAP),
-      ". Luxury decline reflects thin market volatility, ",
-      "not rate sensitivity."
+      study$text$fig9_luxury_note
     )
   ) +
   theme_squeeze
 
-ggsave(figure_path("fig9_price_index.png"), width = 10, height = 5, dpi = 300)
-ggsave(figure_path("fig9_price_index.pdf"), width = 10, height = 5)
+ggsave(file.path(analysis_output_root, "figures/fig9_price_index.png"), width = 10, height = 5, dpi = 300)
+ggsave(file.path(analysis_output_root, "figures/fig9_price_index.pdf"), width = 10, height = 5)
 cat("Saved fig9_price_index.png/.pdf\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -591,15 +562,14 @@ cat("Saved fig9_price_index.png/.pdf\n")
 table_data <- panel_data %>%
   mutate(
     Geography = if_else(geography == "metro",
-                        "Marion County (metro)", "Suburbs"),
+                        study$core_label, "Suburbs"),
     `Price Segment` = case_when(
       price_segment == "entry"      ~ entry_label,
       price_segment == "move_up"    ~ midlux_label,
       TRUE                          ~ luxury_label
     ),
     `Rate Era` = case_when(
-      year <= 2019            ~ "Pre-pandemic baseline (2015–19)",
-      year <= 2021            ~ "Pandemic / low-rate (2020–21)",
+      year == 2021            ~ "Baseline (2021)",
       year == 2022            ~ "Rate shock (2022)",
       year %in% c(2023, 2024) ~ "Elevated plateau (2023–24)",
       year == 2025            ~ "Persistent high (2025)"
@@ -623,7 +593,7 @@ table_data_marked <- table_data %>%
 datasummary(
   (`Median days on market`         = median_dom) +
     (`Avg sale-to-list ratio`        = avg_sale_to_list) +
-    (`Median sale price (2025 $)`    = median_sale_price) +
+    (`Median sale price ($)`         = median_sale_price) +
     (`30-yr mortgage rate (%)`       = mortgage_rate) +
     (`Rate lock-in gap (pp)`         = rate_gap) +
     (`Affordability ratio`           = affordability_ratio) +
@@ -632,8 +602,9 @@ datasummary(
     (`County population`             = population) ~
     Geography * (N + Mean + SD + Median + Min + Max),
   data  = table_data_marked,
-  title = "Table 1: Descriptive Statistics by Geography, 2015–2025",
-  notes = "Source: Redfin, STATS Indiana SDF, FRED, Census ACS 2023 5-year. N = county-month observations.",
+  title = "Table 1: Descriptive Statistics by Geography, 2021–2025",
+  notes = paste0("Source: Redfin, ", study$sdf_table_label,
+                 ", FRED, Census ACS 2023 5-year. N = county-month observations."),
   fmt = function(x) {
     sapply(x, function(val) {
       if (is.na(val)) return("")
@@ -651,12 +622,12 @@ datasummary(
       }
     })
   },
-  output = table_path("table1_descriptive.html")
+  output = file.path(analysis_output_root, "tables/table1_descriptive.html")
 )
 
 # Render HTML table to PNG via webshot2
-tbl1_html <- table_path("table1_descriptive.html")
-tbl1_png  <- table_path("table1_descriptive.png")
+tbl1_html <- file.path(analysis_output_root, "tables/table1_descriptive.html")
+tbl1_png  <- file.path(analysis_output_root, "tables/table1_descriptive.png")
 webshot2::webshot(
   url      = paste0("file://", tbl1_html),
   file     = tbl1_png,
@@ -676,7 +647,7 @@ cat("Saved outputs/tables/table1_descriptive.png\n")
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Read once; derive raw_hhi before imputation to count missing values (P3-1).
-zip_raw <- read_csv(here::here("data/processed/zip_median_prices.csv"),
+zip_raw <- read_csv(here::here(study$zip_prices_file),
                     show_col_types = FALSE) %>%
   filter(zip_code != 0) %>%
   mutate(zip_code = str_pad(as.character(zip_code), 5, pad = "0")) %>%
@@ -725,22 +696,16 @@ zip_data %>%
            size = 4, fontface = "bold", color = "grey30") +
   scale_x_continuous(labels = dollar_format()) +
   scale_y_continuous(labels = dollar_format()) +
-  scale_color_manual(values = c(
-    "Marion"    = "#4472C4",
-    "Hamilton"  = "#ED7D31",
-    "Boone"     = "#70AD47",
-    "Hendricks" = "#FFC000",
-    "Johnson"   = "#9B59B6"
-  )) +
+  scale_color_manual(values = study$county_colors) +
   scale_size_continuous(range = c(2, 8), guide = "none") +
   labs(
-    title    = "Median Household Income vs. Median Real Sale Price by ZIP Code",
+    title    = "Median Household Income vs. Median Sale Price by ZIP Code",
     subtitle = "Point size = transaction volume | Line = OLS fit",
     x        = "Median Household Income (ACS 2023)",
-    y        = "Median Sale Price 2015–2025 (constant 2025 dollars)",
+    y        = "Median Sale Price 2021–2025",
     color    = "County",
     caption  = paste0(
-      "Source: STATS Indiana SDF deed records; Census ACS 2023 5-year.\n",
+      "Source: ", study$sdf_source_short, "; Census ACS 2023 5-year.\n",
       "N = ", nrow(zip_data), " unique zip codes",
       if_else(n_imputed > 0,
               paste0(" (", n_imputed,
@@ -758,9 +723,9 @@ zip_data %>%
     panel.grid.minor = element_blank()
   )
 
-ggsave(figure_path("fig10_hhi_price_correlation.png"),
+ggsave(file.path(analysis_output_root, "figures/fig10_hhi_price_correlation.png"),
        width = 9, height = 6, dpi = 300)
-ggsave(figure_path("fig10_hhi_price_correlation.pdf"),
+ggsave(file.path(analysis_output_root, "figures/fig10_hhi_price_correlation.pdf"),
        width = 9, height = 6)
 cat("Saved fig10_hhi_price_correlation.png/.pdf\n")
 
@@ -768,4 +733,4 @@ cat("Saved fig10_hhi_price_correlation.png/.pdf\n")
 saveRDS(list(r = round(overall_cor, 3),
              r2 = round(overall_cor^2, 3),
              n_zip = nrow(zip_data)),
-        model_path("fig10_correlation_stats.rds"))
+        squeeze_model_path(study, "fig10_correlation_stats.rds"))
