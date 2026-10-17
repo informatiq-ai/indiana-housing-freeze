@@ -198,6 +198,31 @@ personal-property and seller-concession adjustments are intentionally deferred.
 - U.S. Census Bureau, American Community Survey 2023 5-year estimates
 - Federal Reserve Bank of St. Louis (FRED), MORTGAGE30US series
 
+## Twin Cities replication
+
+The Twin Cities replication applies the same 2021–2025 method to Minnesota Department of Revenue eCRV records for the seven-county region. It reports the published headline models for the county geography and for three city-based geographies, because Marion County is consolidated with Indianapolis while Hennepin and Ramsey each combine a core city with affluent suburbs. Price segments are refit on Twin Cities sales with the same k-means method ($463,375 and $1,042,466).
+
+| Geography (core vs. suburbs) | Sales | Entry / move-up slope (%/pp) | Squeeze multiplier | Suburb × post × move-up | Move-up volume (sales/month) |
+|------------------------------|-------|------------------------------|--------------------|-------------------------|------------------------------|
+| Indianapolis: Marion vs. four counties | 201,754 | −0.9 / −5.0 | 5.6× | +17.2% | −340 (p < 0.001) |
+| Hennepin and Ramsey vs. five counties | 242,799 | −2.5 / −5.9 | 2.4× | +2.5% | −204 (p = 0.007) |
+| St. Paul vs. five counties | 126,051 | −4.9 / −10.0 | 2.0× | +15.7% | −14 (p = 0.64) |
+| Minneapolis and St. Paul vs. five counties | 157,329 | −4.0 / −8.4 | 2.1× | +7.9% | −22 (p = 0.44) |
+| Both cities vs. all suburbs | 242,798 | −2.5 / −5.9 | 2.4× | +2.5% | +2 (p = 0.95) |
+
+The suburban move-up price pattern repeats where the core resembles Marion: St. Paul's median household income ($73,055) and thin move-up market produce an offset close to Indiana's. Hennepin ($96,339) sits inside the suburban income range, which weakens the county comparison. The multiplier is lower in every Twin Cities geography because Twin Cities entry prices respond more to the rate gap, and the suburban move-up volume decline does not replicate in the city-based geographies. The slope difference itself is not in doubt: the move-up slope and the move-up minus entry gap are significant in every geography under HC1 errors and under errors clustered by sale month (p < 0.001). Indiana's entry slope is the only slope that loses significance when clustered by sale month (p = 0.097). The DiD estimates are associations with HC1 errors over five to nine areas, so their p-values overstate precision. See the [decision log](docs/decision_log.md) for the sample, segment, and geography choices.
+
+```bash
+python scripts/00_mn_data_pipeline.py          # sample, Redfin, ACS, and ZIP inputs
+SQUEEZE_STUDY=minnesota Rscript scripts/01_data_pipeline.R
+SQUEEZE_STUDY=minnesota Rscript scripts/02_eda_descriptive_stats.R
+SQUEEZE_STUDY=minnesota Rscript scripts/03_regression_hypothesis_tests.R
+Rscript scripts/mn_squeeze/core_city_models.R  # writes outputs/mn/squeeze/core_city_comparison.csv
+Rscript tests/test_core_city_models.R          # synthetic checks for the slope tests
+```
+
+Twin Cities figures and tables are written to `outputs/mn/squeeze_2021_2025/`, which is regenerable and ignored by Git.
+
 ## Minnesota eCRV extension
 
 See [Minnesota ingestion architecture](docs/minnesota_ecrv_architecture.md) for the weekly ZIP findings, schema mapping, malformed-record policy, Twin Cities geography and price-sensitivity research plan. The ingestion pipeline reads XML directly from ZIPs, records processed archive hashes in a local SQLite database, and retains transaction versions and child rows. Full compatibility exports remain CSV; the longitudinal workflow materializes its seven-county, 2015–2025 research slice directly from SQLite as compressed Parquet. Raw archives and generated data remain excluded from Git.

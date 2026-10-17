@@ -42,6 +42,12 @@ RESEARCH_OUTPUTS = [
     "data/processed/mn/research_extract/ecrv_parcels.parquet",
     "data/processed/mn/research_extract/ecrv_personal_property.parquet",
     "data/processed/mn/research_extract/ecrv_addresses.parquet",
+    "data/processed/mn/sdf_minnesota_nominal.csv",
+    "data/processed/mn/sdf_minnesota_core_cities_nominal.csv",
+    "data/processed/mn/sdf_minnesota.csv",
+    "data/processed/mn/zip_median_prices_mn_nominal.csv",
+    "data/processed/mn/panel_data_mn.csv",
+    "data/processed/sdf_indiana.csv",
 ]
 COMPATIBILITY_OUTPUTS = [
     "data/processed/mn/ecrv_transactions.csv",

@@ -243,3 +243,88 @@ choice look pre-specified.
   `scripts/02_eda_descriptive_stats.R`, `scripts/03_regression_hypothesis_tests.R`,
   `scripts/squeeze_study.R`, and `tests/test_squeeze_study.R`.
 - **Protocol classification:** correction to the established analysis.
+
+### 2026-10-16: Refit the squeeze price segments on Twin Cities sales
+
+- **Status:** adopted
+- **Scope:** Twin Cities replication of the established 2021–2025 squeeze analysis
+- **Decision:** Fit the Twin Cities entry, move-up, and luxury segments with the
+  published Indiana method rather than reuse Indiana's dollar breaks: k-means
+  with four clusters on nominal sale price, seed 42, ten initializations,
+  2021–2025 sales at or below $15,000,000, and the top two clusters collapsed
+  into luxury. The fitted breaks are $463,375 and $1,042,466, against $363,424
+  and $1,047,851 in Indiana.
+- **Reason:** Twin Cities prices sit higher than Indianapolis prices, so the
+  Indiana entry break would place much of the Twin Cities middle market in the
+  move-up segment. Refitting keeps "move-up" defined as the middle of each
+  metro's own market.
+- **Sample:** The Twin Cities counterpart of Indiana's residential, arm's-length
+  rules keeps one- to three-family dwellings, condos, cooperatives, townhouses,
+  mobile and manufactured homes, and cabins. It excludes vacant land, 4-unit
+  apartments, care facilities, mobile home parks, garages, and unspecified or
+  rental-investment uses, which Indiana classes as commercial or does not
+  report as residential. Of 292,355 Twin Cities eCRVs dated 2021–2025, 274,469
+  pass the arm's-length and price rules, 244,486 have only listed dwelling
+  uses, and 242,799 carry a valid property ZIP, matching Indiana's ZIP
+  requirement. Every eCRV has its own identifier, so the sample has no
+  repeated filings.
+- **Alternatives considered:** Reuse Indiana's breaks; fit on constant-2025-dollar
+  prices (`--price-basis real`), which yields $500,438 and $1,128,592.
+- **Consequences:** Segment counts differ by definition across metros, so
+  cross-metro comparisons are of each segment's relative response, not of a
+  common dollar band.
+- **Implementation:** `scripts/00_mn_data_pipeline.py`,
+  `scripts/mn_squeeze/sample.py`, `scripts/mn_squeeze/external.py`,
+  `tests/test_mn_squeeze_sample.py`, and
+  `outputs/mn/squeeze/price_segment_breaks_nominal.json`.
+- **Sensitivity:** `price_segment_indiana_breaks` carries the published Indiana
+  nominal breaks on every sale.
+- **Protocol classification:** exploratory replication outside the
+  longitudinal release-candidate protocol.
+
+### 2026-10-16: Compare city-based Twin Cities cores with Marion County
+
+- **Status:** adopted
+- **Scope:** Twin Cities replication of the established squeeze analysis
+- **Decision:** Report the published headline models on three city-based
+  geographies alongside the county geography: St. Paul against the five
+  suburban counties, Minneapolis and St. Paul against the five suburban
+  counties, and both cities against the suburban counties and the Hennepin and
+  Ramsey balances. Minneapolis is excluded where St. Paul is the only core.
+- **Reason:** Marion County is consolidated with the city of Indianapolis and
+  sits far below its suburbs in income ($63,450). Hennepin ($96,339) falls
+  inside the suburban range, and about 70% of its eligible sales lie outside
+  Minneapolis. St. Paul ($73,055) is the closest counterpart to Marion.
+- **Consequences:** Cities use their own ACS 2023 income and population. A
+  county balance uses its parent county's median income and the county
+  population minus the city population. The comparison script reproduces the
+  Indiana results of `03_regression_hypothesis_tests.R` before it reports any
+  Twin Cities geography.
+- **Implementation:** `scripts/mn_squeeze/core_cities.py`,
+  `scripts/mn_squeeze/core_city_models.R`, and
+  `outputs/mn/squeeze/core_city_comparison.csv`.
+- **Protocol classification:** exploratory replication outside the
+  longitudinal release-candidate protocol.
+
+### 2026-10-17: Test the segment rate slopes in the core-city comparison
+
+- **Status:** adopted
+- **Scope:** Twin Cities replication of the established squeeze analysis
+- **Decision:** Report p-values for the entry slope, the move-up slope, and the
+  move-up minus entry gap from the published price interaction model, each
+  under HC1 errors and under errors clustered by the 60 sale months. The
+  move-up slope is the sum of the rate gap and its move-up interaction, so it
+  is tested as that sum.
+- **Reason:** The squeeze multiplier is a ratio of two slopes and carries no
+  test of its own. Sales in the same month share one mortgage rate, so HC1
+  errors treat as independent the variation that the rate gap cannot supply.
+- **Consequences:** The move-up slope and the gap are significant in Indiana
+  and every Twin Cities geography under both errors (p < 0.001). Indiana's
+  entry slope is not significant under month clustering (p = 0.097), so the
+  Indiana multiplier is imprecise even though the gap it summarizes is not.
+  Existing comparison columns are unchanged.
+- **Implementation:** `scripts/mn_squeeze/core_city_models.R`,
+  `tests/test_core_city_models.R`, and
+  `outputs/mn/squeeze/core_city_comparison.csv`.
+- **Protocol classification:** exploratory replication outside the
+  longitudinal release-candidate protocol.
