@@ -17,6 +17,15 @@ MAX_PRICE = 15_000_000
 INDY_COUNTIES = {"Boone", "Hamilton", "Hendricks", "Johnson", "Marion"}
 MSP_COUNTIES = {"Anoka", "Carver", "Dakota", "Hennepin", "Ramsey", "Scott", "Washington"}
 MSP_URBAN = {"Hennepin", "Ramsey"}
+# eCRV records property city as a county-specific four-digit city/township code
+# with no name. These codes were identified from ZIP concordance: their sales
+# fall in Minneapolis and St. Paul postal ZIPs (see
+# msp_core_city_zip_concordance.csv). The county definition stays primary;
+# the city flag supports a core-city sensitivity.
+MSP_CORE_CITY_CODES = {"Hennepin": "8800", "Ramsey": "8900"}
+CORE_CITY_STATUSES = (
+    "CORE_CITY", "COUNTY_BALANCE", "MIXED", "UNKNOWN", "NOT_CORE_COUNTY",
+)
 MN_DISQUALIFYING_FLAGS = (
     "related", "gift", "government", "legal_action", "name_change",
     "non_market_price", "tax_exempt", "buyer_part_interest", "deed_payoff",
@@ -26,7 +35,8 @@ MN_DISQUALIFYING_FLAGS = (
 OUTPUT_COLUMNS = [
     "source_key", "source_state", "source_schema", "source_snapshot",
     "source_version", "sale_date", "sale_year", "sale_month", "county",
-    "county_fips", "metro", "tier_type", "gross_sale_price", "adjusted_price",
+    "county_fips", "metro", "tier_type", "core_city_status", "gross_sale_price",
+    "adjusted_price",
     "personal_property_total", "seller_paid_points", "parcel_count",
     "property_type_evidence", "single_family", "eligible_current_study",
     "eligible_strict_comparable", "strict_eligibility_available",
@@ -197,6 +207,7 @@ def prepare_indiana(path: Path, start_year: int, end_year: int) -> pd.DataFrame:
     for column in ("sale_date", "sale_year", "sale_month", "county", "county_fips",
                    "metro", "tier_type", "gross_sale_price", "parcel_count"):
         result[column] = frame[column]
+    result["core_city_status"] = pd.NA
     result["adjusted_price"] = pd.NA
     result["personal_property_total"] = pd.NA
     result["seller_paid_points"] = pd.NA
@@ -306,6 +317,71 @@ def summarize_mn_personal_property(
     return summary.reset_index()
 
 
+def _mn_address_codes(path: Path, source_keys: set[str]) -> pd.DataFrame:
+    """Return property city codes and 5-digit ZIPs per address row; no street."""
+    required = ["source_key", "city", "zip"]
+    addresses = _read_child_rows(path, required, source_keys)
+    _require_columns(addresses, set(required), path)
+    addresses = addresses.astype("string")
+    addresses["city"] = addresses["city"].str.strip().replace("", pd.NA)
+    addresses["zip"] = addresses["zip"].str.strip().str[:5].replace("", pd.NA)
+    return addresses
+
+
+def classify_core_city(addresses: pd.DataFrame, counties: pd.Series) -> pd.Series:
+    """Classify each transaction's property city against its county's core city.
+
+    Inputs are address rows (source_key, city) and a county name per source key.
+    Blank codes are ignored when another address carries a code. Returns a
+    status per source key: CORE_CITY when every coded address is in the core
+    city, COUNTY_BALANCE when none is, MIXED when both occur, UNKNOWN when no
+    address carries a code, and NOT_CORE_COUNTY outside Hennepin and Ramsey.
+    """
+    status = pd.Series("NOT_CORE_COUNTY", index=counties.index, dtype="string")
+    core_county = counties.isin(MSP_CORE_CITY_CODES.keys())
+    status.loc[core_county] = "UNKNOWN"
+    coded = addresses.dropna(subset=["city"])
+    coded = coded.loc[coded["source_key"].isin(counties.index[core_county])]
+    if coded.empty:
+        return status
+    core_code = counties.reindex(coded["source_key"]).map(MSP_CORE_CITY_CODES)
+    in_core = pd.Series(
+        coded["city"].to_numpy() == core_code.to_numpy(), index=coded["source_key"]
+    )
+    shares = in_core.groupby(level=0).agg(["all", "any"])
+    status.loc[shares.index[shares["all"]]] = "CORE_CITY"
+    status.loc[shares.index[~shares["any"]]] = "COUNTY_BALANCE"
+    status.loc[shares.index[shares["any"] & ~shares["all"]]] = "MIXED"
+    return status
+
+
+def core_city_zip_concordance(
+    processed_dir: Path, minnesota: pd.DataFrame
+) -> pd.DataFrame:
+    """Count core-county address rows by county, ZIP, and core-code match.
+
+    This aggregate is the evidence that the configured codes identify
+    Minneapolis and St. Paul; it carries no street or party detail.
+    """
+    core = minnesota.loc[minnesota["county"].isin(MSP_CORE_CITY_CODES.keys()),
+                         ["source_key", "county"]]
+    addresses = _mn_address_codes(
+        _table_path(processed_dir, "ecrv_addresses"), set(core["source_key"])
+    ).merge(core, on="source_key", how="inner")
+    addresses["core_code"] = addresses["county"].map(MSP_CORE_CITY_CODES)
+    addresses["address_city_class"] = "COUNTY_BALANCE_CODE"
+    addresses.loc[addresses["city"].isna(), "address_city_class"] = "BLANK_CODE"
+    addresses.loc[addresses["city"].eq(addresses["core_code"]).fillna(False),
+                  "address_city_class"] = "CORE_CITY_CODE"
+    concordance = addresses.groupby(
+        ["county", "zip", "address_city_class"], dropna=False
+    ).size().rename("address_rows").reset_index()
+    return concordance.pivot_table(
+        index=["county", "zip"], columns="address_city_class", values="address_rows",
+        fill_value=0, dropna=False,
+    ).reset_index().rename_axis(columns=None)
+
+
 def prepare_minnesota(processed_dir: Path, start_year: int, end_year: int) -> pd.DataFrame:
     required = {
         "source_key", "schema_variant", "sale_date", "sale_year", "sale_month",
@@ -362,6 +438,10 @@ def prepare_minnesota(processed_dir: Path, start_year: int, end_year: int) -> pd
     frame = transactions.merge(uses, on="source_key", how="left", validate="one_to_one")
     frame = frame.merge(parcel_counts, on="source_key", how="left", validate="one_to_one")
     frame = frame.merge(personal, on="source_key", how="left", validate="one_to_one")
+    addresses = _mn_address_codes(_table_path(processed_dir, "ecrv_addresses"), source_keys)
+    core_status = classify_core_city(
+        addresses, frame.set_index("source_key")["county_name"]
+    )
 
     result = pd.DataFrame(index=frame.index)
     result["source_key"] = frame["source_key"]
@@ -378,6 +458,7 @@ def prepare_minnesota(processed_dir: Path, start_year: int, end_year: int) -> pd
     result["tier_type"] = frame["county_name"].map(
         lambda county: "URBAN_CORE" if county in MSP_URBAN else "SUBURBAN_COLLAR"
     )
+    result["core_city_status"] = frame["source_key"].map(core_status)
     result["gross_sale_price"] = pd.to_numeric(frame["gross_sale_price"], errors="coerce")
     result["seller_paid_points"] = pd.to_numeric(frame["seller_paid_points"], errors="coerce")
     result["parcel_count"] = frame["parcel_count"].astype("Int64")
@@ -513,6 +594,15 @@ def build_quality_outputs(transactions: pd.DataFrame, quality_dir: Path) -> None
         ).size().rename("records").reset_index()
     _atomic_csv(event_frame, quality_dir / "research_exclusions.csv")
 
+    minnesota = transactions.loc[transactions["source_state"] == "MN"]
+    core_city = minnesota.groupby(
+        ["county", "sale_year", "core_city_status"], dropna=False
+    ).agg(
+        normalized_records=("source_key", "size"),
+        research_eligible_records=("research_eligible", "sum"),
+    ).reset_index()
+    _atomic_csv(core_city, quality_dir / "msp_core_city_classification.csv")
+
 
 def run_prepare(indiana_path: Path, minnesota_dir: Path, output: Path,
                 quality_dir: Path, start_year: int, end_year: int) -> dict:
@@ -533,10 +623,14 @@ def run_prepare(indiana_path: Path, minnesota_dir: Path, output: Path,
     _atomic_parquet(combined, parquet_output)
     _atomic_csv(combined, output)
     build_quality_outputs(combined, quality_dir)
+    _atomic_csv(
+        core_city_zip_concordance(minnesota_dir, minnesota),
+        quality_dir / "msp_core_city_zip_concordance.csv",
+    )
     inputs = [indiana_path] + [
         _table_path(minnesota_dir, stem) for stem in (
             "ecrv_transactions", "ecrv_uses", "ecrv_parcels",
-            "ecrv_personal_property",
+            "ecrv_personal_property", "ecrv_addresses",
         )
     ]
     manifest = {

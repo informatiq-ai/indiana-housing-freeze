@@ -6,7 +6,9 @@ import unittest
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "research"))
-from longitudinal import OUTPUT_COLUMNS, prepare_indiana, prepare_minnesota, regime_for_year
+from longitudinal import (
+    OUTPUT_COLUMNS, classify_core_city, prepare_indiana, prepare_minnesota, regime_for_year,
+)
 
 
 class LongitudinalResearchTests(unittest.TestCase):
@@ -78,8 +80,12 @@ class LongitudinalResearchTests(unittest.TestCase):
                 "source_key": transaction["source_key"], "selected": "true",
                 "propertyValue": "5000.0000",
             }]).to_csv(root / "ecrv_personal_property.csv", index=False)
+            pd.DataFrame([{
+                "source_key": transaction["source_key"], "city": "8800", "zip": "55406-1234",
+            }]).to_csv(root / "ecrv_addresses.csv", index=False)
 
             result = prepare_minnesota(root, 2015, 2025).iloc[0]
+            self.assertEqual(result["core_city_status"], "CORE_CITY")
             self.assertTrue(result["single_family"])
             self.assertTrue(result["eligible_current_study"])
             self.assertTrue(result["eligible_strict_comparable"])
@@ -98,7 +104,7 @@ class LongitudinalResearchTests(unittest.TestCase):
 
             for stem in (
                 "ecrv_transactions", "ecrv_uses", "ecrv_parcels",
-                "ecrv_personal_property",
+                "ecrv_personal_property", "ecrv_addresses",
             ):
                 csv_path = root / f"{stem}.csv"
                 pd.read_csv(csv_path).to_parquet(root / f"{stem}.parquet", index=False)
@@ -139,13 +145,40 @@ class LongitudinalResearchTests(unittest.TestCase):
             pd.DataFrame(columns=["source_key", "selected", "propertyValue"]).to_csv(
                 root / "ecrv_personal_property.csv", index=False
             )
+            pd.DataFrame(columns=["source_key", "city", "zip"]).to_csv(
+                root / "ecrv_addresses.csv", index=False
+            )
 
             result = prepare_minnesota(root, 2015, 2025).iloc[0]
+            self.assertEqual(result["core_city_status"], "NOT_CORE_COUNTY")
             self.assertTrue(result["eligible_current_study"])
             self.assertFalse(result["eligible_strict_comparable"])
             self.assertFalse(result["strict_eligibility_available"])
             self.assertIn("related_or_unknown", result["exclusion_reasons_strict"])
             self.assertIn("deed_type_unknown", result["exclusion_reasons_strict"])
+
+
+    def test_core_city_classification(self):
+        counties = pd.Series({
+            "core": "Hennepin", "balance": "Hennepin", "other_core_code": "Hennepin",
+            "mixed": "Ramsey", "blank_ignored": "Ramsey", "no_address": "Ramsey",
+            "all_blank": "Hennepin", "collar": "Anoka",
+        })
+        addresses = pd.DataFrame([
+            ("core", "8800"), ("core", "8800"), ("balance", "4100"),
+            # St. Paul's code in Hennepin is not a core-city address.
+            ("other_core_code", "8900"),
+            ("mixed", "8900"), ("mixed", "0400"),
+            ("blank_ignored", None), ("blank_ignored", "8900"),
+            ("all_blank", None), ("collar", "8800"),
+        ], columns=["source_key", "city"])
+        status = classify_core_city(addresses, counties)
+        self.assertEqual(status.to_dict(), {
+            "core": "CORE_CITY", "balance": "COUNTY_BALANCE",
+            "other_core_code": "COUNTY_BALANCE", "mixed": "MIXED",
+            "blank_ignored": "CORE_CITY", "no_address": "UNKNOWN",
+            "all_blank": "UNKNOWN", "collar": "NOT_CORE_COUNTY",
+        })
 
 
 if __name__ == "__main__":

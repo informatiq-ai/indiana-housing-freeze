@@ -145,3 +145,50 @@ choice look pre-specified.
 - **Sensitivity:** Rerun primary Twin Cities estimates excluding the 591 revised
   in-window transactions.
 - **Protocol classification:** adopted before the longitudinal release candidate.
+
+### 2026-10-16: Add a Minneapolis/St. Paul core-city sensitivity
+
+- **Status:** adopted
+- **Scope:** Twin Cities and pooled analysis
+- **Decision:** Keep the county definition primary and add the
+  `msp_core_city_definition` sensitivity, which treats Minneapolis and St. Paul
+  as the urban core and moves the Hennepin and Ramsey balances to the suburban
+  collar. Place each sale with the eCRV property city code: `8800` in Hennepin
+  for Minneapolis and `8900` in Ramsey for St. Paul. Exclude sales marked
+  `MIXED` or `UNKNOWN` and report their counts.
+- **Reason:** The county definition places suburbs such as Bloomington and
+  Roseville in the urban core. The eCRV city field is a county-specific code
+  with no name, so the codes were validated against ZIP codes: 94.8% of
+  Hennepin addresses coded `8800` fall in Minneapolis ZIPs, and 97.6% of Ramsey
+  addresses coded `8900` fall in St. Paul ZIPs. The remainder fall in ZIPs that
+  cross the city line. The coded share is stable from 2015 through 2025, with
+  Minneapolis at 29–31% of Hennepin sales and St. Paul at 53–56% of Ramsey sales.
+- **Classification:** Hennepin has 82,990 core-city sales, 187,793 balance sales,
+  7,798 unknown, and 8 mixed. Ramsey has 54,745 core-city sales, 43,760 balance
+  sales, 2,440 unknown, and 7 mixed. These counts cover all 2015–2025
+  transactions. The exclusion removes 10,253 of 379,541 Hennepin and Ramsey
+  transactions (2.7%); research-eligible counts are reported in
+  `sensitivity_availability.csv` after the longitudinal run.
+- **Unknown sales:** The 10,238 unknown sales carry no usable property address.
+  Of these, 336 have no address record, and the other 9,904 address rows have
+  blank street, city, and ZIP fields in the raw store. No ZIP or geocoding
+  fallback is possible. Unknown sales are concentrated in 2015–2018 (1,280 to
+  2,076 a year) and fall to 181 in 2025.
+- **Alternatives considered:** ZIP-based assignment, which misplaces sales in
+  ZIPs that cross the city line; a city-level primary definition, which would
+  change the pre-specified geography.
+- **Consequences:** The sensitivity estimates on nine geographic units instead
+  of seven counties. Split units carry their parent county's ACS income because
+  the panel does not join city-level ACS estimates.
+- **Follow-up:** Unknown sales still carry parcel IDs. Joining them to current
+  Hennepin and Ramsey parcel datasets, which list each parcel's city, could
+  recover most of them. Parcels split or renumbered since sale would not match
+  and would be counted. Pursue this if the core-city estimates prove sensitive
+  to the 2015–2018 coverage gap.
+- **Implementation:** `scripts/mn_ecrv/store.py` (address export without street
+  lines), `classify_core_city` in `scripts/research/longitudinal.py`,
+  `msp_core_city_units` in `scripts/research/03_estimate_models.R`,
+  `outputs/research/quality/msp_core_city_classification.csv`, and
+  `outputs/research/quality/msp_core_city_zip_concordance.csv`.
+- **Protocol classification:** pre-specified sensitivity, added before the
+  longitudinal release candidate.

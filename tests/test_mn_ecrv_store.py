@@ -16,7 +16,9 @@ from mn_ecrv.store import (
 def xml(price):
     return f"""<ecrvForm>
       <headerForm><countyCde>27</countyCde><crvNumberId>123</crvNumberId></headerForm>
-      <propertyForm><county>27</county></propertyForm>
+      <propertyForm><county>27</county>
+      <mnPropertyAddresses><city>8800</city><id>1</id><street1>1 Main St</street1>
+      <zip>55406</zip></mnPropertyAddresses></propertyForm>
       <salesAgreementForm><deedContractDate>2024-01-02</deedContractDate>
       <totPurchaseAmt>{price}</totPurchaseAmt></salesAgreementForm>
       <supplementaryForm />
@@ -64,6 +66,10 @@ class StoreTests(unittest.TestCase):
             exported = pd.read_parquet(output / "ecrv_transactions.parquet")
             self.assertEqual(exported.iloc[0]["gross_sale_price"], "310000")
             self.assertNotIn("member_name", exported.columns)
+            addresses = pd.read_parquet(output / "ecrv_addresses.parquet")
+            self.assertEqual(addresses.iloc[0]["city"], "8800")
+            self.assertEqual(addresses.iloc[0]["zip"], "55406")
+            self.assertFalse(any("street" in column for column in addresses.columns))
             cached = export_research_parquet(database, output, 2015, 2025)
             self.assertTrue(cached["cached"])
             database.close()

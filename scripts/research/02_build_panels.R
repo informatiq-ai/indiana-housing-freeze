@@ -257,7 +257,8 @@ cpi_base <- fred %>% filter(str_starts(sale_month, "2025-")) %>%
 
 transaction_columns <- c(
   "source_key", "source_schema", "sale_year", "sale_month", "county", "county_fips",
-  "metro", "tier_type", "gross_sale_price", "adjusted_price", "research_eligible",
+  "metro", "tier_type", "core_city_status", "gross_sale_price", "adjusted_price",
+  "research_eligible",
   "eligible_strict_comparable", "single_family", "parse_recovered",
   "recent_reporting_period", "regime"
 )
@@ -265,7 +266,8 @@ transactions <- read_csv(
   transactions_path,
   col_select = all_of(transaction_columns),
   col_types = cols(
-    source_key = col_character(), county_fips = col_character(), sale_month = col_character()
+    source_key = col_character(), county_fips = col_character(), sale_month = col_character(),
+    core_city_status = col_character()
   )
 ) %>%
   mutate(sale_year = as.integer(sale_year), gross_sale_price = as.numeric(gross_sale_price),

@@ -179,6 +179,9 @@ descriptive capacity measure, not an independently identified causal channel.
 - Schema-era indicators and the Indiana pre/post-2021 source discontinuity.
 - County leave-one-out estimates, emphasizing Hamilton and Hennepin; mark a
   result inestimable when removal eliminates the only comparison group.
+- Twin Cities core-city geography: Minneapolis and St. Paul as the urban core,
+  with the Hennepin and Ramsey balances in the suburban collar. Sales whose
+  property city cannot be placed are excluded and counted.
 - Exclusion of provisional income, CPI-imputed periods, and recent reporting-
   lag months.
 - Composition adjustment using stable observed property characteristics where

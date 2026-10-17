@@ -41,6 +41,7 @@ RESEARCH_OUTPUTS = [
     "data/processed/mn/research_extract/ecrv_uses.parquet",
     "data/processed/mn/research_extract/ecrv_parcels.parquet",
     "data/processed/mn/research_extract/ecrv_personal_property.parquet",
+    "data/processed/mn/research_extract/ecrv_addresses.parquet",
 ]
 COMPATIBILITY_OUTPUTS = [
     "data/processed/mn/ecrv_transactions.csv",

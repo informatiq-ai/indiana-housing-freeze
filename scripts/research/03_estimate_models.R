@@ -594,6 +594,7 @@ build_transaction_panel <- function(data, eligibility, price_column = "real_sale
   prepare_panel(filtered)
 }
 
+sensitivity_availability <- list()
 sensitivity_specs <- list(
   list(name = "quantile_tiers", panel = quantile_panel, exposure = "rate_gap_pp"),
   list(name = "lag_3_months", panel = tier_panel, exposure = "rate_gap_lag3_pp"),
@@ -613,6 +614,53 @@ sensitivity_specs <- list(
     transactions, research_eligible, lower = 75000, upper = 10000000), exposure = "rate_gap_pp")
 )
 
+# Core-city geography sensitivity for MSP. The primary definition treats all of
+# Hennepin and Ramsey as urban core although both contain suburbs. Here
+# Minneapolis and St. Paul (eCRV property city codes) form the URBAN_CORE units
+# and the Hennepin and Ramsey balances join the SUBURBAN_COLLAR, so the
+# specification keeps county-style unit and month fixed effects with clustering
+# on nine geographic units instead of seven counties. Each split unit carries
+# its parent county's ACS income because the county estimates do not divide at
+# city boundaries. MIXED and UNKNOWN core-county sales cannot be placed and are
+# excluded.
+msp_core_city_units <- function(data) {
+  data %>% filter(metro == "MSP", core_city_status %in% c(
+    "CORE_CITY", "COUNTY_BALANCE", "NOT_CORE_COUNTY"
+  )) %>% mutate(
+    tier_type = if_else(core_city_status == "CORE_CITY", "URBAN_CORE",
+                        "SUBURBAN_COLLAR"),
+    county = case_when(
+      core_city_status == "CORE_CITY" & county == "Hennepin" ~ "Minneapolis",
+      core_city_status == "CORE_CITY" & county == "Ramsey" ~ "St. Paul",
+      core_city_status == "COUNTY_BALANCE" ~ paste(county, "balance"),
+      TRUE ~ county
+    ),
+    county_fips = case_when(
+      core_city_status == "CORE_CITY" ~ paste0(county_fips, "C"),
+      core_city_status == "COUNTY_BALANCE" ~ paste0(county_fips, "B"),
+      TRUE ~ county_fips
+    )
+  )
+}
+
+msp_core_city_excluded <- transactions %>%
+  filter(metro == "MSP", research_eligible,
+         core_city_status %in% c("MIXED", "UNKNOWN")) %>%
+  count(core_city_status)
+sensitivity_specs[[length(sensitivity_specs) + 1L]] <- list(
+  name = "msp_core_city_definition", panel = build_transaction_panel(
+    msp_core_city_units(transactions), research_eligible
+  ), exposure = "rate_gap_pp"
+)
+sensitivity_availability[[length(sensitivity_availability) + 1L]] <- tibble(
+  specification = "msp_core_city_definition", metro = "MSP", available = TRUE,
+  reason = paste0(
+    "Excludes research-eligible core-county sales without a placeable city: ",
+    paste(msp_core_city_excluded$core_city_status, msp_core_city_excluded$n,
+          sep = "=", collapse = ", ")
+  )
+)
+
 if (sum(!is.na(transactions$real_adjusted_price) & transactions$metro == "MSP") > 0) {
   sensitivity_specs[[length(sensitivity_specs) + 1L]] <- list(
     name = "msp_adjusted_price", panel = build_transaction_panel(
@@ -623,7 +671,6 @@ if (sum(!is.na(transactions$real_adjusted_price) & transactions$metro == "MSP") 
 }
 
 sensitivity_results <- list()
-sensitivity_availability <- list()
 for (spec in sensitivity_specs) {
   for (metro_name in intersect(c("INDY", "MSP"), unique(as.character(spec$panel$metro)))) {
     data <- spec$panel %>% filter(metro == metro_name)
@@ -769,6 +816,7 @@ notes <- c(
   "- The move-up-to-entry ratio comes from a secondary year-and-season fixed-effect model because absolute national rate slopes are not identified with calendar-month effects.",
   "- The ratio output reports a county-bootstrap interval and a centered bootstrap test against the prior 4.5 value; 4.5 is not imposed during estimation.",
   "- Percent-effect columns transform log-link coefficients as 100 * (exp(beta) - 1); rate exposure is measured in percentage points.",
+  "- The msp_core_city_definition sensitivity replaces Hennepin and Ramsey with Minneapolis and St. Paul as the MSP urban core and moves the county balances to the suburban collar; split units use parent-county ACS income.",
   "- Failed pre-trend tests require associational rather than causal DiD language."
 )
 writeLines(notes, file.path(output_root, "MODEL_NOTES.md"))

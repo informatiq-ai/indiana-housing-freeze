@@ -84,6 +84,17 @@ income, recent reporting periods, and every estimable county leave-one-out case.
 Removing Marion is reported as unavailable because it removes Indianapolis's
 only urban-core comparison rather than producing a misleading coefficient.
 
+The Twin Cities core-city sensitivity addresses the suburbs inside Hennepin and
+Ramsey counties. Each Minnesota transaction carries a `core_city_status` derived
+from the eCRV property city code: `CORE_CITY`, `COUNTY_BALANCE`, `MIXED`,
+`UNKNOWN`, or `NOT_CORE_COUNTY`. The `msp_core_city_definition` specification
+treats Minneapolis and St. Paul as the urban core and moves the county balances
+to the suburban collar, so it estimates on nine geographic units instead of
+seven counties. Split units carry their parent county's ACS income, and sales
+marked `MIXED` or `UNKNOWN` are excluded with counts reported in
+`sensitivity_availability.csv`. The ZIP evidence behind the city codes is in
+`outputs/research/quality/msp_core_city_zip_concordance.csv`.
+
 The pooled model adds the metro interaction to test whether the Indianapolis
 triple interaction differs from MSP. The previously reported 4.5× sensitivity
 ratio is treated as a hypothesis to test, not a maintained assumption.
